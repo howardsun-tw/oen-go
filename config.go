@@ -24,12 +24,14 @@ type Config struct {
 	// Environment fills BaseURL and CheckoutBaseURL when they are empty.
 	Environment Environment
 
-	// BaseURL overrides the API host, for example a local fake.
+	// BaseURL overrides the API host, for example a local fake. A path prefix
+	// is allowed, but query strings and fragments are not.
 	BaseURL string
 
 	// CheckoutBaseURL is the host that serves the hosted payment pages,
 	// https://{merchantId}.oen.tw in production. Redirect URLs are built from
 	// it; leaving it empty leaves [CheckoutSession.RedirectURL] empty too.
+	// A path prefix is allowed, but query strings and fragments are not.
 	CheckoutBaseURL string
 
 	// MerchantID is the merchant's Oen domain name, for example "oentech" for
@@ -107,11 +109,11 @@ func (cfg Config) normalized() (Config, error) {
 			fmt.Sprintf("unknown environment %q", cfg.Environment))
 	}
 
-	if err := validateHTTPURL(op, "baseURL", cfg.BaseURL); err != nil {
+	if err := validateBaseURL(op, "baseURL", cfg.BaseURL); err != nil {
 		return Config{}, err
 	}
 	if cfg.CheckoutBaseURL != "" {
-		if err := validateHTTPURL(op, "checkoutBaseURL", cfg.CheckoutBaseURL); err != nil {
+		if err := validateBaseURL(op, "checkoutBaseURL", cfg.CheckoutBaseURL); err != nil {
 			return Config{}, err
 		}
 	}
@@ -152,6 +154,18 @@ func environmentHosts(environment Environment, merchantID string) (apiHost, chec
 		return "https://payment-api.testing.oen.tw", "https://" + merchantID + ".testing.oen.tw"
 	}
 	return "https://payment-api.oen.tw", "https://" + merchantID + ".oen.tw"
+}
+
+func validateBaseURL(op, field, value string) error {
+	if err := validateHTTPURL(op, field, value); err != nil {
+		return err
+	}
+	// Literal delimiters would swallow an appended endpoint path. Escaped
+	// delimiters in a path prefix are valid and remain untouched.
+	if strings.ContainsAny(value, "?#") {
+		return newValidationError(op, field, "base URL must not contain a query string or fragment")
+	}
+	return nil
 }
 
 func validateHTTPURL(op, field, value string) error {

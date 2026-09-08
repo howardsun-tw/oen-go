@@ -140,6 +140,12 @@ own responses and sending an empty string is not the same as sending nothing.
   `data`) that is empty or null, or an object with nothing but `page` is an
   empty list; any other object shape is `ErrUnknownOutcome`. The published
   examples show only non-empty lists, so the empty shapes are an assumption.
+  A supplied non-null `page` must be a string; malformed tokens return
+  `ErrUnknownOutcome` instead of silently ending pagination. String tokens
+  are preserved verbatim.
+- `Config.BaseURL` and `Config.CheckoutBaseURL` may include a path prefix,
+  but cannot contain a query string or fragment: endpoint paths are appended
+  to these values. Return URLs may still contain queries and fragments.
 - Return URLs (per request and `Config.DefaultSuccessURL`/`DefaultFailureURL`)
   must be absolute `http` or `https` URLs and are refused locally otherwise.
 - Response parsing errors preserve the HTTP status and decoded provider code.

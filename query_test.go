@@ -93,6 +93,41 @@ func TestListOrderTransactionsRequiresAnOrderID(t *testing.T) {
 	equal(t, 0, len(server.Requests()))
 }
 
+func TestListTransactionsRejectsMalformedPageTokens(t *testing.T) {
+	for _, token := range []string{`{}`, `[]`, `true`, `123`} {
+		t.Run(token, func(t *testing.T) {
+			server, client := newFake(t)
+			server.QueueResponse("/transactions", oentest.Response{
+				Body: []byte(`{"code":"S0000","data":{"transactions":[{"id":"P1","amount":1000}],"page":` + token + `}}`),
+			})
+			page, err := client.ListTransactions(context.Background(), ListTransactionsRequest{})
+			errIs(t, err, ErrUnknownOutcome)
+			if page != nil {
+				t.Fatal("malformed pagination must not return a usable partial result")
+			}
+		})
+	}
+}
+
+func TestListTransactionsAcceptsAbsentOrStringPageTokens(t *testing.T) {
+	for _, test := range []struct{ field, want string }{
+		{"", ""},
+		{`,"page":null`, ""},
+		{`,"page":""`, ""},
+		{`,"page":" opaque+/= "`, " opaque+/= "},
+	} {
+		t.Run(test.field, func(t *testing.T) {
+			server, client := newFake(t)
+			server.QueueResponse("/transactions", oentest.Response{
+				Body: []byte(`{"code":"S0000","data":{"transactions":[]` + test.field + `}}`),
+			})
+			page, err := client.ListTransactions(context.Background(), ListTransactionsRequest{})
+			noError(t, err)
+			equal(t, test.want, page.NextPage)
+		})
+	}
+}
+
 // Oen returns lists in more than one envelope shape across its endpoints, and
 // a shape the SDK cannot read must be an error rather than an empty list: an
 // empty list would read as "no charge happened".

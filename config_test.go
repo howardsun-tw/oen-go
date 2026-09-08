@@ -14,6 +14,39 @@ func validConfig() Config {
 	}
 }
 
+func TestNewRejectsBaseURLsThatCannotAppendEndpointPaths(t *testing.T) {
+	for _, field := range []string{"baseURL", "checkoutBaseURL"} {
+		for _, suffix := range []string{"?tenant=one", "?", "#section", "#"} {
+			t.Run(field+suffix, func(t *testing.T) {
+				cfg := validConfig()
+				value := "https://example.com/api" + suffix
+				if field == "baseURL" {
+					cfg.BaseURL = value
+				} else {
+					cfg.CheckoutBaseURL = value
+				}
+				_, err := New(cfg)
+				errIs(t, err, ErrInvalidInput)
+				var detail *ValidationError
+				isTrue(t, asValidationError(err, &detail))
+				equal(t, field, detail.Field)
+			})
+		}
+	}
+}
+
+func TestNewPreservesBasePathPrefixesAndReturnURLQueries(t *testing.T) {
+	cfg := validConfig()
+	cfg.BaseURL = "https://api.example/v1%3Fpart%23name"
+	cfg.CheckoutBaseURL = "https://checkout.example/payments"
+	cfg.DefaultSuccessURL = "https://merchant.example/return?order=one#paid"
+	cfg.DefaultFailureURL = "https://merchant.example/return?order=one#failed"
+	client, err := New(cfg)
+	noError(t, err)
+	equal(t, cfg.BaseURL, client.BaseURL())
+	equal(t, cfg.CheckoutBaseURL, client.CheckoutBaseURL())
+}
+
 // Oen publishes one API host and one checkout host per environment, and the
 // checkout host carries the merchant name. Deriving both from the environment
 // is the difference between a working integration and a production charge sent

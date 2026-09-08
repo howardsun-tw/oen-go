@@ -59,8 +59,9 @@ func (c *Client) GetTransaction(ctx context.Context, transactionID string) (*Tra
 // ListOrderTransactions returns every transaction Oen holds for one merchant
 // order reference (用訂單編號查詢交易列表).
 //
-// This is the query that resolves an [ErrUnknownOutcome] charge: the charge
-// either shows up here or it never happened.
+// Use this query to reconcile an [ErrUnknownOutcome] charge. An empty result
+// does not prove that an earlier request will never finish; the caller owns
+// reconciliation and any decision to resend.
 func (c *Client) ListOrderTransactions(ctx context.Context, orderID string) ([]Transaction, error) {
 	const op = "ListOrderTransactions"
 	if strings.TrimSpace(orderID) == "" {
@@ -197,7 +198,12 @@ func listResources(data json.RawMessage) ([]json.RawMessage, string, error) {
 	if err := json.Unmarshal(data, &wrapper); err != nil {
 		return nil, "", fmt.Errorf("decode transaction list: %w", err)
 	}
-	page := rawString(wrapper["page"])
+	var page string
+	if raw := wrapper["page"]; !isNullRaw(raw) {
+		if err := json.Unmarshal(raw, &page); err != nil {
+			return nil, "", fmt.Errorf("decode transaction page token: %w", err)
+		}
+	}
 	for _, key := range []string{"transactions", "items", "data"} {
 		raw, present := wrapper[key]
 		if !present {
