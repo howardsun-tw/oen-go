@@ -90,6 +90,11 @@ type Server struct {
 	transactionsByID    map[string]map[string]any
 	transactionsByOrder map[string][]map[string]any
 	subscriptions       map[string]map[string]any
+
+	// closed unblocks Hang waiters when Close runs, so Close cannot deadlock
+	// on an in-flight hang while still avoiding an empty HTTP 200.
+	closed     chan struct{}
+	closeOnce  sync.Once
 }
 
 // New starts a fake that answers every documented endpoint successfully.
@@ -110,9 +115,16 @@ func New() *Server {
 		transactionsByID:    make(map[string]map[string]any),
 		transactionsByOrder: make(map[string][]map[string]any),
 		subscriptions:       make(map[string]map[string]any),
+		closed:              make(chan struct{}),
 	}
 	server.Server = httptest.NewServer(http.HandlerFunc(server.serve))
 	return server
+}
+
+// Close shuts the fake down and releases any Hang waiters.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() { close(s.closed) })
+	s.Server.Close()
 }
 
 // QueueResponse queues responses for one endpoint in FIFO order. The endpoint
@@ -138,7 +150,8 @@ func (s *Server) Reject(endpoint, code, message string) {
 
 // FailHTTP queues an HTTP failure with no body.
 func (s *Server) FailHTTP(endpoint string, status int) {
-	s.QueueResponse(endpoint, Response{StatusCode: status})
+	// Body must be non-nil so writeResponse does not invent an S0000 envelope.
+	s.QueueResponse(endpoint, Response{StatusCode: status, Body: []byte{}})
 }
 
 // Malformed queues a 2xx whose body is not JSON.
@@ -152,8 +165,10 @@ func (s *Server) ChargeThenFail(endpoint string, status int) {
 	s.QueueResponse(endpoint, Response{StatusCode: status, RecordCharge: true})
 }
 
-// Hang blocks an endpoint until the request context is cancelled. The bounded
-// fallback keeps Close from hanging on a faulty test.
+// Hang blocks an endpoint until the request context is cancelled or the
+// server is closed. The connection is dropped without writing a response, so
+// a client waiting past its timeout sees a transport failure rather than an
+// empty HTTP 200.
 func (s *Server) Hang(endpoint string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,12 +285,7 @@ func (s *Server) serve(writer http.ResponseWriter, request *http.Request) {
 		_ = s.defaultResponse(request.Method, path, body)
 	}
 	if response.Block || s.isBlocked(request.Method, path) {
-		timer := time.NewTimer(250 * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case <-request.Context().Done():
-		case <-timer.C:
-		}
+		s.hang(writer, request)
 		return
 	}
 	if response.Delay > 0 {
@@ -314,6 +324,26 @@ func (s *Server) isBlocked(method, path string) bool {
 		}
 	}
 	return false
+}
+
+// hang holds the connection open without writing headers. Returning from the
+// handler without hijacking would become an empty HTTP 200 from httptest.
+func (s *Server) hang(writer http.ResponseWriter, request *http.Request) {
+	if hijacker, ok := writer.(http.Hijacker); ok {
+		conn, _, err := hijacker.Hijack()
+		if err == nil {
+			defer conn.Close()
+			select {
+			case <-request.Context().Done():
+			case <-s.closed:
+			}
+			return
+		}
+	}
+	select {
+	case <-request.Context().Done():
+	case <-s.closed:
+	}
 }
 
 func (s *Server) defaultResponse(method, path string, body []byte) Response {

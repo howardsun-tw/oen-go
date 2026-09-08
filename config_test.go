@@ -99,6 +99,9 @@ func TestConfigValidatesEveryRequiredSetting(t *testing.T) {
 	}{
 		{name: "unknown environment", mutate: func(c *Config) { c.Environment = "staging" }, field: "environment"},
 		{name: "missing merchant", mutate: func(c *Config) { c.MerchantID = " " }, field: "merchantId"},
+		{name: "merchant with slash", mutate: func(c *Config) { c.MerchantID = "evil.com/x" }, field: "merchantId"},
+		{name: "merchant with at", mutate: func(c *Config) { c.MerchantID = "foo@bar" }, field: "merchantId"},
+		{name: "merchant with dot", mutate: func(c *Config) { c.MerchantID = "oen.tw" }, field: "merchantId"},
 		{name: "missing token", mutate: func(c *Config) { c.AuthToken = "" }, field: "authToken"},
 		{name: "negative timeout", mutate: func(c *Config) { c.Timeout = -time.Second }, field: "timeout"},
 		{name: "unparseable base URL", mutate: func(c *Config) { c.BaseURL = "://nope" }, field: "baseURL"},

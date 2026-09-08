@@ -213,7 +213,7 @@ message, the HTTP status and a `Kind`.
 | `IsUnauthorized` | `KindUnauthorized` | `A0001` (or another A code). |
 | — | `KindTransactionState` | `V0002`: the target is not in a state that allows this. |
 | `IsRateLimited` | `KindRateLimited` | HTTP 429. Wait `RetryAfter(err)`. |
-| `IsUnknownOutcome` | `KindUnknownOutcome` | Query before doing anything else. |
+| `IsUnknownOutcome` | `KindUnknownOutcome`, and also POST/PUT 429 | Query before doing anything else. A rate-limited write keeps `KindRateLimited` and still matches this helper. |
 | — | `KindInvalidInput` | An `*oen.ValidationError`: the request never left. |
 
 `(*Error).DeclineReason()` maps a decline onto `insufficient_funds`,

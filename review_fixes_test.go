@@ -3,6 +3,7 @@ package oen
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -382,4 +383,55 @@ func TestEveryPurchaseEndpointSharesThePayloadEncoding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Hang must not become an empty HTTP 200 under the default client timeout.
+// That mis-classifies a hung charge as a fast unknown outcome without a
+// deadline, which breaks the README "times out" contract for oentest.Hang.
+func TestHangTimesOutUnderDefaultClientTimeout(t *testing.T) {
+	server := oentest.New()
+	t.Cleanup(server.Close)
+	server.Hang("/token/transactions")
+
+	client := newTestClient(t, server)
+	client.cfg.Timeout = 80 * time.Millisecond
+
+	started := time.Now()
+	_, err := client.ChargeToken(context.Background(), testCharge())
+	elapsed := time.Since(started)
+	hasError(t, err)
+	errIs(t, err, ErrUnknownOutcome)
+	errIs(t, err, context.DeadlineExceeded)
+	if elapsed < 60*time.Millisecond {
+		t.Fatalf("hang returned too quickly (%s); empty 200 would look like this", elapsed)
+	}
+	equal(t, 1, server.Count("/token/transactions"))
+}
+
+// FailHTTP must send no body. An invented S0000 envelope on HTTP 401 would
+// still be KindUnknownOutcome, but it would look like a success code arrived.
+func TestFailHTTPSendsNoBody(t *testing.T) {
+	server := oentest.New()
+	t.Cleanup(server.Close)
+	server.FailHTTP("/token/transactions", 401)
+
+	client := newTestClient(t, server)
+	_, err := client.ChargeToken(context.Background(), testCharge())
+	hasError(t, err)
+	errIs(t, err, ErrUnknownOutcome)
+
+	var detail *Error
+	isTrue(t, errors.As(err, &detail))
+	equal(t, 401, detail.HTTPStatus)
+	equal(t, "", detail.Code)
+}
+
+// GET must not advertise a zero-length body. Some strict gateways reject that.
+func TestGETOmitsContentLength(t *testing.T) {
+	server, client := newFake(t)
+	_, err := client.ListOrderTransactions(context.Background(), "ORDER00001")
+	noError(t, err)
+	request := server.LastRequest("/order/{orderId}/transactions")
+	equal(t, "", request.Header.Get("Content-Length"))
+	equal(t, "", request.Header.Get("Content-Type"))
 }

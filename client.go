@@ -91,7 +91,11 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	defer cancel()
 
 	started := c.cfg.Now()
-	request, err := http.NewRequestWithContext(callCtx, method, c.cfg.BaseURL+path, bytes.NewReader(body))
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+	request, err := http.NewRequestWithContext(callCtx, method, c.cfg.BaseURL+path, bodyReader)
 	if err != nil {
 		return response{}, &Error{Op: op, Kind: KindInvalidInput, Err: fmt.Errorf("build request: %w", err)}
 	}

@@ -61,7 +61,7 @@ func TestChargeTokenSendsInvoiceInformationWhenGiven(t *testing.T) {
 	noError(t, err)
 	body := bodyOf(t, server.LastRequest("/token/transactions"))
 	jsonEqual(t,
-		`{"invoiceType":"company","carrierType":"","buyerIdentifier":"12345678","buyerName":"應援科技","email":"invoice@oen.tw"}`,
+		`{"invoiceType":"company","buyerIdentifier":"12345678","buyerName":"應援科技","email":"invoice@oen.tw"}`,
 		string(body["invoiceInfo"]))
 
 	server2, client2 := newFake(t)

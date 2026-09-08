@@ -23,8 +23,8 @@ Hosts, from the collection description:
 | Production | `https://payment-api.oen.tw` | `https://{merchantId}.oen.tw` |
 | Testing | `https://payment-api.testing.oen.tw` | `https://{merchantId}.testing.oen.tw` |
 
-Every request carries `Content-Type: application/json` and
-`Authorization: Bearer {authToken}`. Every response is
+Every request carries `Authorization: Bearer {authToken}`. Requests that
+carry a body also send `Content-Type: application/json`. Every response is
 `{"code":"","message":"","data":{}}`.
 
 Hosted page redirects, from each endpoint's description in the collection

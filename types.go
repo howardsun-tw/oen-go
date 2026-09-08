@@ -262,8 +262,8 @@ func wireLineItems(items []LineItem) []wireProductDetail {
 }
 
 type wireInvoiceInfo struct {
-	InvoiceType     string `json:"invoiceType"`
-	CarrierType     string `json:"carrierType"`
+	InvoiceType     string `json:"invoiceType,omitempty"`
+	CarrierType     string `json:"carrierType,omitempty"`
 	CarrierID       string `json:"carrierId,omitempty"`
 	BuyerIdentifier string `json:"buyerIdentifier,omitempty"`
 	BuyerName       string `json:"buyerName,omitempty"`
@@ -271,12 +271,12 @@ type wireInvoiceInfo struct {
 }
 
 type wireRemitInfo struct {
-	BankCode    string `json:"bankCode"`
-	BankName    string `json:"bankName"`
-	BranchCode  string `json:"branchCode"`
-	BranchName  string `json:"branchName"`
-	Account     string `json:"account"`
-	AccountName string `json:"accountName"`
+	BankCode    string `json:"bankCode,omitempty"`
+	BankName    string `json:"bankName,omitempty"`
+	BranchCode  string `json:"branchCode,omitempty"`
+	BranchName  string `json:"branchName,omitempty"`
+	Account     string `json:"account,omitempty"`
+	AccountName string `json:"accountName,omitempty"`
 }
 
 type wireTransaction struct {
@@ -407,8 +407,12 @@ type wireSubscription struct {
 }
 
 func decodeSubscription(resource json.RawMessage, loc *time.Location, requireAmount bool) (Subscription, error) {
+	clean, err := SanitizeJSON(resource)
+	if err != nil {
+		return Subscription{}, fmt.Errorf("sanitize subscription: %w", err)
+	}
 	var wire wireSubscription
-	if err := json.Unmarshal(resource, &wire); err != nil {
+	if err := json.Unmarshal(clean, &wire); err != nil {
 		return Subscription{}, fmt.Errorf("decode subscription: %w", err)
 	}
 	id := rawString(wire.ID)
@@ -465,7 +469,7 @@ func decodeSubscription(resource json.RawMessage, loc *time.Location, requireAmo
 		OrderID:         rawString(wire.OrderID),
 		Reason:          rawString(wire.Reason),
 		Note:            rawString(wire.Note),
-		RedactedPayload: redactedResource(resource),
+		RedactedPayload: clean,
 	}, nil
 }
 

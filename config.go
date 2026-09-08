@@ -86,6 +86,9 @@ func (cfg Config) normalized() (Config, error) {
 	if cfg.MerchantID == "" {
 		return Config{}, newValidationError(op, "merchantId", "merchant ID is required")
 	}
+	if err := validateMerchantID(op, cfg.MerchantID); err != nil {
+		return Config{}, err
+	}
 	if cfg.AuthToken == "" {
 		return Config{}, newValidationError(op, "authToken", "auth token is required")
 	}
@@ -154,6 +157,26 @@ func environmentHosts(environment Environment, merchantID string) (apiHost, chec
 		return "https://payment-api.testing.oen.tw", "https://" + merchantID + ".testing.oen.tw"
 	}
 	return "https://payment-api.oen.tw", "https://" + merchantID + ".oen.tw"
+}
+
+// validateMerchantID requires a single DNS label. Checkout hosts are built as
+// https://{merchantId}.oen.tw; values with "/", "@" or dots would point the
+// payer at the wrong host.
+func validateMerchantID(op, merchantID string) error {
+	if len(merchantID) > 63 {
+		return newValidationError(op, "merchantId", "merchant ID must be a single DNS label (at most 63 characters)")
+	}
+	for i, r := range merchantID {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			continue
+		case r == '-' && i > 0 && i < len(merchantID)-1:
+			continue
+		default:
+			return newValidationError(op, "merchantId", "merchant ID must be a single DNS label")
+		}
+	}
+	return nil
 }
 
 func validateBaseURL(op, field, value string) error {
