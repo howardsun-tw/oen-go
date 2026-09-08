@@ -1,0 +1,290 @@
+{
+  "source": "https://documenter.getpostman.com/view/26861354/2sBY4MuLoX",
+  "checked_on": "2026-09-08",
+  "collection_sha256": "65566ab3ab7d60d0d2869725d3df5ed70d094c81afbcc8b0efa0b8728f3b2caf",
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/checkout",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "2HhndgEquCbDzC5OyVxWSGZmd2l",
+            "transactionHid": "P20231110DIBK6LLZ"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/checkout-subscription",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "2HhndgEquCbDzC5OyVxWSGZmd2l",
+            "transactionHid": "P20231110DIBK6LLZ"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/checkout-schedule",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "2HhndgEquCbDzC5OyVxWSGZmd2l",
+            "transactionHid": "P20231110DIBK6LLZ"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/checkout-token",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "2eqe6kF33wbq9Dy1UNoMPzY7tal"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/token/transactions",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "P202210139EKASEJ7",
+            "authCode": "831000"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/token/subscriptions",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "subscriptionId": "S20240412YOARH7GM",
+            "transactionId": "P20240412ZPKL1HIM",
+            "authCode": "831000"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/transactions/:id",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "P20240412QJMAZNML",
+            "transactionId": "2ezVvlPIKZzJxY8L2ukhEPKDJWz",
+            "action": "onetime",
+            "amount": 1000,
+            "fee": 30,
+            "paymentInfo": {
+              "cardType": "Visa",
+              "cardNum": "4242424242424242",
+              "method": "card",
+              "cardName": "王小明"
+            },
+            "status": "charged",
+            "userId": "OEN00001",
+            "userName": "王小明",
+            "userEmail": "test@oen.tw",
+            "orderId": "ORDER00001",
+            "note": "備註",
+            "createdAt": "2024-04-12T07:40:25.502Z",
+            "refundAmount": 0
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/subscriptions/:subscriptionId",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "S2024041277SVMQE5",
+            "status": "ongoing",
+            "period": 1,
+            "startedAt": "2024-04-12T07:44:35.592Z",
+            "nextChargeAt": "2024-05-11T16:00:00.000Z",
+            "createdAt": "2024-04-12T07:44:35.592Z",
+            "amount": 1000,
+            "userId": "OEN00001",
+            "userName": "王小明",
+            "orderId": "ORDER00001",
+            "note": "備註"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/transactions",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "transactions": [
+              {
+                "id": "P20240412B1FAHYBP",
+                "transactionId": "2ezWgiTV8T1xUqpu1zNYwucd0Cr",
+                "action": "onetime",
+                "amount": 1000,
+                "fee": 30,
+                "paymentInfo": {
+                  "cardType": "Visa",
+                  "cardNum": "4242424242424242",
+                  "method": "card",
+                  "cardName": "王小明"
+                },
+                "status": "charged",
+                "userId": "OEN00001",
+                "userName": "王小明",
+                "userEmail": "test@oen.tw",
+                "orderId": "ORDER00001",
+                "note": "備註",
+                "createdAt": "2024-04-12T07:46:39.052Z",
+                "refundAmount": 0
+              }
+            ],
+            "page": "eyJMaW1pdCI6MTAwLCJMYXN0RXZhbHVhdGVkS2V5Ijp7InNrIjoiQ0hBUkdFIzJFaTVzRW5CdU55OUpGOXU2UFNwZ1E3cGdwVSIsImdzaTFzayI6IjIwMjItMDktMTNUMTA6NDI6NDguMTg0WiIsInBrIjoiQ0hBUkdFIzJFaTVzRW5CdU55OUpGOXU2UFNwZ1E3cGdwVSIsImdzaTFwayI6IkNIQVJHRSNueW9ueW9mYW5nIn19"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/order/:orderId/transactions",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "transactions": [
+              {
+                "id": "P20240412CIK7KPPH",
+                "transactionId": "2ezXfrdyypKEajH1J7nO3qOQH73",
+                "action": "onetime",
+                "amount": 1000,
+                "fee": 30,
+                "paymentInfo": {
+                  "cardType": "Visa",
+                  "cardNum": "4242424242424242",
+                  "method": "card",
+                  "cardName": "王小明"
+                },
+                "status": "charged",
+                "userId": "OEN00001",
+                "userName": "王小明",
+                "userEmail": "test@oen.tw",
+                "orderId": "ORDER00001",
+                "note": "備註",
+                "createdAt": "2024-04-12T07:54:46.755Z",
+                "refundAmount": 0
+              }
+            ]
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/subscriptions/:subscriptionId",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "S202404112CYPRJPZ",
+            "status": "cancelled",
+            "period": 1,
+            "startedAt": "2024-04-11T10:31:46.640Z",
+            "cancelledAt": "2024-04-11T10:31:46.744Z",
+            "reason": "客戶自行取消",
+            "createdAt": "2024-04-11T10:31:46.640Z"
+          },
+          "message": ""
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/refunds/:transactionHid",
+      "responses": [
+        {
+          "code": "S0000",
+          "data": {
+            "id": "P20240411AN3KW7BK",
+            "action": "onetime",
+            "amount": 1000,
+            "fee": 30,
+            "paymentInfo": {
+              "cardType": "Visa",
+              "cardNum": "4242424242424242",
+              "method": "card",
+              "cardName": "王小明"
+            },
+            "status": "refunded",
+            "userId": "OEN00001",
+            "userName": "王小明",
+            "userEmail": "test@oen.tw",
+            "orderId": "ORDER00001",
+            "note": "客戶取消訂單",
+            "createdAt": "2024-04-11T10:45:22.026Z",
+            "refundAmount": 1000,
+            "refundedAt": "2024-04-11T10:45:22.076Z"
+          },
+          "message": ""
+        },
+        {
+          "code": "S0000",
+          "data": {
+            "id": "P2024041185E6BNG6",
+            "action": "onetime",
+            "amount": 1000,
+            "fee": 30,
+            "paymentInfo": {
+              "cardType": "Visa",
+              "cardNum": "4242424242424242",
+              "method": "card",
+              "cardName": "王小明"
+            },
+            "status": "refunded",
+            "userId": "OEN00001",
+            "userName": "王小明",
+            "userEmail": "test@oen.tw",
+            "orderId": "ORDER00001",
+            "createdAt": "2024-04-11T10:48:48.488Z",
+            "refundAmount": 1000,
+            "refundedAt": "2024-04-11T10:48:48.560Z"
+          },
+          "message": ""
+        }
+      ]
+    }
+  ]
+}

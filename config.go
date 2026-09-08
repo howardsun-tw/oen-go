@@ -1,0 +1,153 @@
+package oen
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const defaultTimeout = 10 * time.Second
+
+// Environment selects the Oen hosts. There is no default: an integration that
+// guesses would send live charges to the wrong place.
+type Environment string
+
+const (
+	Production Environment = "production"
+	Testing    Environment = "testing"
+)
+
+// Config describes one merchant's access to Oen.
+type Config struct {
+	// Environment fills BaseURL and CheckoutBaseURL when they are empty.
+	Environment Environment
+
+	// BaseURL overrides the API host, for example a local fake.
+	BaseURL string
+
+	// CheckoutBaseURL is the host that serves the hosted payment pages,
+	// https://{merchantId}.oen.tw in production. Redirect URLs are built from
+	// it; leaving it empty leaves [CheckoutSession.RedirectURL] empty too.
+	CheckoutBaseURL string
+
+	// MerchantID is the merchant's Oen domain name, for example "oentech" for
+	// https://oentech.oen.tw. It is sent in every request body.
+	MerchantID string
+
+	// AuthToken is the bearer token from the Oen CRM console. It is never
+	// logged and never returned in an error.
+	AuthToken string
+
+	// Timeout bounds one HTTP request. It defaults to 10 seconds. A timeout on
+	// a charge does not mean the charge failed; see [ErrUnknownOutcome].
+	Timeout time.Duration
+
+	// HTTPClient is used for every request. A caller that needs proxies, mTLS
+	// or connection tuning supplies its own. The SDK copies this client and
+	// disables redirects without changing the supplied client. Custom
+	// transports must not retry state-changing requests.
+	HTTPClient *http.Client
+
+	// UserAgent is sent with every request when set.
+	UserAgent string
+
+	// DefaultSuccessURL and DefaultFailureURL fill the return URLs of hosted
+	// page requests that leave them empty.
+	DefaultSuccessURL string
+	DefaultFailureURL string
+
+	// NaiveTimeLocation interprets timestamps that arrive without an offset.
+	// Oen documents every date as ISO in UTC+0, so it defaults to time.UTC.
+	NaiveTimeLocation *time.Location
+
+	// Now supplies the clock used for Retry-After deadlines and call duration.
+	Now func() time.Time
+
+	// Logf receives one line per request: method, path, HTTP status, outcome
+	// and duration. It never receives credentials, tokens or card data.
+	Logf func(format string, args ...any)
+}
+
+func (cfg Config) normalized() (Config, error) {
+	const op = "Config"
+
+	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	cfg.CheckoutBaseURL = strings.TrimRight(strings.TrimSpace(cfg.CheckoutBaseURL), "/")
+	cfg.MerchantID = strings.TrimSpace(cfg.MerchantID)
+	cfg.AuthToken = strings.TrimSpace(cfg.AuthToken)
+
+	if cfg.MerchantID == "" {
+		return Config{}, newValidationError(op, "merchantId", "merchant ID is required")
+	}
+	if cfg.AuthToken == "" {
+		return Config{}, newValidationError(op, "authToken", "auth token is required")
+	}
+
+	switch cfg.Environment {
+	case Production, Testing:
+		apiHost, checkoutHost := environmentHosts(cfg.Environment, cfg.MerchantID)
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = apiHost
+		}
+		if cfg.CheckoutBaseURL == "" {
+			cfg.CheckoutBaseURL = checkoutHost
+		}
+	case "":
+		if cfg.BaseURL == "" {
+			return Config{}, newValidationError(op, "environment",
+				"set Environment to production or testing, or set BaseURL explicitly")
+		}
+	default:
+		return Config{}, newValidationError(op, "environment",
+			fmt.Sprintf("unknown environment %q", cfg.Environment))
+	}
+
+	if err := validateHTTPURL(op, "baseURL", cfg.BaseURL); err != nil {
+		return Config{}, err
+	}
+	if cfg.CheckoutBaseURL != "" {
+		if err := validateHTTPURL(op, "checkoutBaseURL", cfg.CheckoutBaseURL); err != nil {
+			return Config{}, err
+		}
+	}
+
+	if cfg.Timeout < 0 {
+		return Config{}, newValidationError(op, "timeout", "timeout must not be negative")
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = defaultTimeout
+	}
+	if cfg.NaiveTimeLocation == nil {
+		cfg.NaiveTimeLocation = time.UTC
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Logf == nil {
+		cfg.Logf = func(string, ...any) {}
+	}
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{}
+	}
+	return cfg, nil
+}
+
+func environmentHosts(environment Environment, merchantID string) (apiHost, checkoutHost string) {
+	if environment == Testing {
+		return "https://payment-api.testing.oen.tw", "https://" + merchantID + ".testing.oen.tw"
+	}
+	return "https://payment-api.oen.tw", "https://" + merchantID + ".oen.tw"
+}
+
+func validateHTTPURL(op, field, value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return newValidationError(op, field, fmt.Sprintf("%q is not an absolute URL", value))
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return newValidationError(op, field, fmt.Sprintf("%q must use http or https", value))
+	}
+	return nil
+}
