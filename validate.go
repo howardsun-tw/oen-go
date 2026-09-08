@@ -64,7 +64,12 @@ func validateItems(op string, amount Amount, items []LineItem) error {
 	return nil
 }
 
+// returnURLs resolves the hosted page's return URLs. Oen redirects the payer
+// to them, so a relative or non-HTTP value is refused here rather than spent
+// on a provider call that ends in a broken redirect.
 func (c *Client) returnURLs(op, successURL, failureURL string) (string, string, error) {
+	successURL = strings.TrimSpace(successURL)
+	failureURL = strings.TrimSpace(failureURL)
 	if successURL == "" {
 		successURL = c.cfg.DefaultSuccessURL
 	}
@@ -77,6 +82,12 @@ func (c *Client) returnURLs(op, successURL, failureURL string) (string, string, 
 	if failureURL == "" {
 		return "", "", newValidationError(op, "failureUrl", "failure URL is required; set it on the request or in Config.DefaultFailureURL")
 	}
+	if err := validateHTTPURL(op, "successUrl", successURL); err != nil {
+		return "", "", err
+	}
+	if err := validateHTTPURL(op, "failureUrl", failureURL); err != nil {
+		return "", "", err
+	}
 	return successURL, failureURL, nil
 }
 
@@ -85,7 +96,7 @@ func validateSchedule(op string, numberOfPeriods, paymentInterval int, startDate
 		return err
 	}
 	if paymentInterval < 0 || paymentInterval > 12 {
-		return newValidationError(op, "paymentInterval", "payment interval must be between 1 and 12 months")
+		return newValidationError(op, "paymentInterval", "payment interval must be between 1 and 12 months, or zero for Oen's default")
 	}
 	return validateProviderDate(op, "startDate", startDate)
 }

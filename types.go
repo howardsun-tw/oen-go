@@ -43,13 +43,13 @@ const (
 type TransactionStatus string
 
 const (
-	StatusInitiated          TransactionStatus = "initiated"          // 已建立付款意向
-	StatusCharging           TransactionStatus = "charging"           // 付款中
-	StatusCharged            TransactionStatus = "charged"            // 已付款
-	StatusFailed             TransactionStatus = "failed"             // 付款失敗
-	StatusClaimed            TransactionStatus = "claimed"            // 已撥款
-	StatusRefunded           TransactionStatus = "refunded"           // 已退款
-	StatusRefundedPostPayout TransactionStatus = "refundedPostPayout" // 撥款後退款
+	StatusInitiated          TransactionStatus = "initiated"          // payment intent created (已建立付款意向)
+	StatusCharging           TransactionStatus = "charging"           // payment in progress (付款中)
+	StatusCharged            TransactionStatus = "charged"            // paid (已付款)
+	StatusFailed             TransactionStatus = "failed"             // payment failed (付款失敗)
+	StatusClaimed            TransactionStatus = "claimed"            // paid out to the merchant (已撥款)
+	StatusRefunded           TransactionStatus = "refunded"           // refunded (已退款)
+	StatusRefundedPostPayout TransactionStatus = "refundedPostPayout" // refunded after payout (撥款後退款)
 )
 
 // Known reports whether the status is one this SDK version documents. An
@@ -87,11 +87,11 @@ func (s TransactionStatus) IsRefunded() bool {
 type SubscriptionStatus string
 
 const (
-	SubscriptionWaiting   SubscriptionStatus = "waiting"   // 尚未開始
-	SubscriptionOngoing   SubscriptionStatus = "ongoing"   // 進行中
-	SubscriptionCancelled SubscriptionStatus = "cancelled" // 已取消
-	SubscriptionDone      SubscriptionStatus = "done"      // 已結束
-	SubscriptionError     SubscriptionStatus = "error"     // 異常
+	SubscriptionWaiting   SubscriptionStatus = "waiting"   // not started yet (尚未開始)
+	SubscriptionOngoing   SubscriptionStatus = "ongoing"   // in progress (進行中)
+	SubscriptionCancelled SubscriptionStatus = "cancelled" // cancelled (已取消)
+	SubscriptionDone      SubscriptionStatus = "done"      // finished (已結束)
+	SubscriptionError     SubscriptionStatus = "error"     // abnormal (異常)
 )
 
 // Known reports whether the status is one this SDK version documents.
@@ -112,11 +112,11 @@ func (s SubscriptionStatus) IsActive() bool {
 // LineItem is one entry of Oen's productDetails. Oen requires the line items
 // to add up to the request amount.
 type LineItem struct {
-	ProductionCode string // 商品編號
-	Description    string // 商品描述
-	Quantity       int    // 數量
-	Unit           string // 單位
-	UnitPrice      Amount // 單價
+	ProductionCode string // product code (商品編號)
+	Description    string // product description (商品描述)
+	Quantity       int    // quantity (數量)
+	Unit           string // unit (單位)
+	UnitPrice      Amount // unit price (單價)
 }
 
 // Customer carries the optional consumer fields. Oen requires Name and Email
@@ -132,7 +132,7 @@ type InvoiceInfo struct {
 	InvoiceType     string // cloud | company
 	CarrierType     string // 3J0002 | CQ0001 | ""
 	CarrierID       string
-	BuyerIdentifier string // 統一編號
+	BuyerIdentifier string // business tax ID (統一編號)
 	BuyerName       string
 	Email           string
 }
@@ -332,13 +332,32 @@ func decodeTransaction(resource json.RawMessage, loc *time.Location) (Transactio
 	if err != nil {
 		return Transaction{}, fmt.Errorf("transaction refundAmount: %w", err)
 	}
-	info := decodePaymentInfo(wire.PaymentInfo, loc)
+	info, err := decodePaymentInfo(wire.PaymentInfo, loc)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("transaction paymentInfo: %w", err)
+	}
 	if info.Method == "" {
 		info.Method = PaymentMethod(rawString(wire.PaymentMethod))
 	}
 	period, err := parseOptionalInt(wire.Period)
 	if err != nil {
 		return Transaction{}, fmt.Errorf("transaction period: %w", err)
+	}
+	createdAt, err := parseTime(wire.CreatedAt, loc)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("transaction createdAt: %w", err)
+	}
+	paidAt, err := optionalTime(wire.PaidAt, loc)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("transaction paidAt: %w", err)
+	}
+	refundedAt, err := optionalTime(wire.RefundedAt, loc)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("transaction refundedAt: %w", err)
+	}
+	payoutAt, err := optionalTime(wire.PayoutAt, loc)
+	if err != nil {
+		return Transaction{}, fmt.Errorf("transaction payoutAt: %w", err)
 	}
 	return Transaction{
 		ID:            id,
@@ -356,14 +375,14 @@ func decodeTransaction(resource json.RawMessage, loc *time.Location) (Transactio
 			Name:  rawString(wire.UserName),
 			Email: rawString(wire.UserEmail),
 		},
-		Note:            truncateRunes(rawString(wire.Note), 500),
-		Reason:          truncateRunes(rawString(wire.Reason), 500),
+		Note:            rawString(wire.Note),
+		Reason:          rawString(wire.Reason),
 		PaymentInfo:     info,
-		CreatedAt:       firstTime(loc, wire.CreatedAt),
-		PaidAt:          optionalTime(wire.PaidAt, loc),
-		RefundedAt:      optionalTime(wire.RefundedAt, loc),
+		CreatedAt:       createdAt,
+		PaidAt:          paidAt,
+		RefundedAt:      refundedAt,
 		PayoutID:        rawString(wire.PayoutID),
-		PayoutAt:        optionalTime(wire.PayoutAt, loc),
+		PayoutAt:        payoutAt,
 		SubscriptionID:  rawString(wire.SubscriptionID),
 		Period:          period,
 		RedactedPayload: clean,
@@ -412,6 +431,22 @@ func decodeSubscription(resource json.RawMessage, loc *time.Location, requireAmo
 	if err != nil {
 		return Subscription{}, fmt.Errorf("subscription numberOfPeriods: %w", err)
 	}
+	startedAt, err := parseTime(wire.StartedAt, loc)
+	if err != nil {
+		return Subscription{}, fmt.Errorf("subscription startedAt: %w", err)
+	}
+	createdAt, err := parseTime(wire.CreatedAt, loc)
+	if err != nil {
+		return Subscription{}, fmt.Errorf("subscription createdAt: %w", err)
+	}
+	nextChargeAt, err := optionalTime(wire.NextChargeAt, loc)
+	if err != nil {
+		return Subscription{}, fmt.Errorf("subscription nextChargeAt: %w", err)
+	}
+	cancelledAt, err := optionalTime(wire.CancelledAt, loc)
+	if err != nil {
+		return Subscription{}, fmt.Errorf("subscription cancelledAt: %w", err)
+	}
 	return Subscription{
 		ID:              id,
 		Status:          SubscriptionStatus(rawString(wire.Status)),
@@ -419,17 +454,17 @@ func decodeSubscription(resource json.RawMessage, loc *time.Location, requireAmo
 		HasAmount:       hasAmount,
 		Period:          period,
 		NumberOfPeriods: numberOfPeriods,
-		StartedAt:       firstTime(loc, wire.StartedAt),
-		CreatedAt:       firstTime(loc, wire.CreatedAt),
-		NextChargeAt:    optionalTime(wire.NextChargeAt, loc),
-		CancelledAt:     optionalTime(wire.CancelledAt, loc),
+		StartedAt:       startedAt,
+		CreatedAt:       createdAt,
+		NextChargeAt:    nextChargeAt,
+		CancelledAt:     cancelledAt,
 		Customer: Customer{
 			ID:   rawString(wire.UserID),
 			Name: rawString(wire.UserName),
 		},
 		OrderID:         rawString(wire.OrderID),
-		Reason:          truncateRunes(rawString(wire.Reason), 500),
-		Note:            truncateRunes(rawString(wire.Note), 500),
+		Reason:          rawString(wire.Reason),
+		Note:            rawString(wire.Note),
 		RedactedPayload: redactedResource(resource),
 	}, nil
 }
@@ -450,9 +485,12 @@ type wirePaymentInfo struct {
 	ExpiredAt json.RawMessage `json:"expiredAt"`
 }
 
-func decodePaymentInfo(raw json.RawMessage, loc *time.Location) PaymentInfo {
+// decodePaymentInfo reads Oen's paymentInfo field. An absent value is an
+// empty PaymentInfo; a value that is neither a string nor an object, or that
+// carries an unreadable expiredAt, is an error rather than a silent blank.
+func decodePaymentInfo(raw json.RawMessage, loc *time.Location) (PaymentInfo, error) {
 	if isNullRaw(raw) {
-		return PaymentInfo{}
+		return PaymentInfo{}, nil
 	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
@@ -461,11 +499,15 @@ func decodePaymentInfo(raw json.RawMessage, loc *time.Location) PaymentInfo {
 		if isFourDigits(text) {
 			info.CardLast4 = text
 		}
-		return info
+		return info, nil
 	}
 	var wire wirePaymentInfo
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return PaymentInfo{}
+		return PaymentInfo{}, fmt.Errorf("decode paymentInfo: %w", err)
+	}
+	expiredAt, err := optionalTime(wire.ExpiredAt, loc)
+	if err != nil {
+		return PaymentInfo{}, fmt.Errorf("paymentInfo expiredAt: %w", err)
 	}
 	info := PaymentInfo{
 		Method:    PaymentMethod(rawString(wire.Method)),
@@ -477,7 +519,7 @@ func decodePaymentInfo(raw json.RawMessage, loc *time.Location) PaymentInfo {
 		Account:   rawString(wire.Account),
 		CVSName:   rawString(wire.CVSName),
 		Code:      rawString(wire.Code),
-		ExpiredAt: optionalTime(wire.ExpiredAt, loc),
+		ExpiredAt: expiredAt,
 	}
 	if info.Method == "" {
 		switch {
@@ -489,7 +531,7 @@ func decodePaymentInfo(raw json.RawMessage, loc *time.Location) PaymentInfo {
 			info.Method = MethodCVS
 		}
 	}
-	return info
+	return info, nil
 }
 
 func isFourDigits(value string) bool {

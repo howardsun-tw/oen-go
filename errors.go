@@ -13,16 +13,16 @@ import (
 // its first letter, and an unrecognised letter is treated as an unknown
 // outcome rather than as a refusal.
 const (
-	CodeSuccess                 = "S0000" // 執行成功
-	CodeUnauthorized            = "A0001" // 未授權
-	CodeInvalidRequest          = "V0001" // 請求錯誤
-	CodeInvalidTransactionState = "V0002" // 交易狀態錯誤
-	CodeTransactionFailed       = "T0001" // 交易失敗
-	CodeInvalidCVV              = "T0002" // 安全碼 CVV 錯誤
-	CodeCardExpired             = "T0003" // 卡片過期
-	CodeInsufficientFunds       = "T0004" // 額度不足
-	CodeCardDeclined            = "T0005" // 拒絕授權
-	CodeSystemError             = "F0001" // 系統錯誤
+	CodeSuccess                 = "S0000" // success (執行成功)
+	CodeUnauthorized            = "A0001" // unauthorized (未授權)
+	CodeInvalidRequest          = "V0001" // invalid request (請求錯誤)
+	CodeInvalidTransactionState = "V0002" // invalid transaction state (交易狀態錯誤)
+	CodeTransactionFailed       = "T0001" // transaction failed (交易失敗)
+	CodeInvalidCVV              = "T0002" // invalid CVV (安全碼 CVV 錯誤)
+	CodeCardExpired             = "T0003" // card expired (卡片過期)
+	CodeInsufficientFunds       = "T0004" // insufficient funds (額度不足)
+	CodeCardDeclined            = "T0005" // authorization declined (拒絕授權)
+	CodeSystemError             = "F0001" // system error (系統錯誤)
 )
 
 // Kind classifies the response. Use errors.Is or the exported helpers when
@@ -348,22 +348,18 @@ func parseRetryAfter(headers http.Header, now time.Time) time.Duration {
 	if value == "" {
 		return 0
 	}
-	digits := true
-	for _, digit := range value {
-		if digit < '0' || digit > '9' {
-			digits = false
-			break
-		}
-	}
-	if digits {
-		seconds, err := strconv.ParseUint(value, 10, 64)
-		const maxDelay = time.Duration(1<<63 - 1)
-		if err != nil || seconds > uint64(maxDelay/time.Second) {
-			// A very large valid delay must not wrap to zero and trigger an
-			// immediate retry. Saturate at the representable duration limit.
+	// A very large valid delay must not wrap to zero and trigger an
+	// immediate retry. Saturate at the representable duration limit.
+	const maxDelay = time.Duration(1<<63 - 1)
+	seconds, err := strconv.ParseUint(value, 10, 64)
+	switch {
+	case err == nil:
+		if seconds > uint64(maxDelay/time.Second) {
 			return maxDelay
 		}
 		return time.Duration(seconds) * time.Second
+	case errors.Is(err, strconv.ErrRange):
+		return maxDelay
 	}
 	if when, err := http.ParseTime(value); err == nil {
 		if delay := when.Sub(now); delay > 0 {

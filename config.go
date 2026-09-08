@@ -54,7 +54,8 @@ type Config struct {
 	UserAgent string
 
 	// DefaultSuccessURL and DefaultFailureURL fill the return URLs of hosted
-	// page requests that leave them empty.
+	// page requests that leave them empty. When set they must be absolute
+	// http or https URLs.
 	DefaultSuccessURL string
 	DefaultFailureURL string
 
@@ -77,6 +78,8 @@ func (cfg Config) normalized() (Config, error) {
 	cfg.CheckoutBaseURL = strings.TrimRight(strings.TrimSpace(cfg.CheckoutBaseURL), "/")
 	cfg.MerchantID = strings.TrimSpace(cfg.MerchantID)
 	cfg.AuthToken = strings.TrimSpace(cfg.AuthToken)
+	cfg.DefaultSuccessURL = strings.TrimSpace(cfg.DefaultSuccessURL)
+	cfg.DefaultFailureURL = strings.TrimSpace(cfg.DefaultFailureURL)
 
 	if cfg.MerchantID == "" {
 		return Config{}, newValidationError(op, "merchantId", "merchant ID is required")
@@ -109,6 +112,16 @@ func (cfg Config) normalized() (Config, error) {
 	}
 	if cfg.CheckoutBaseURL != "" {
 		if err := validateHTTPURL(op, "checkoutBaseURL", cfg.CheckoutBaseURL); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.DefaultSuccessURL != "" {
+		if err := validateHTTPURL(op, "defaultSuccessURL", cfg.DefaultSuccessURL); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.DefaultFailureURL != "" {
+		if err := validateHTTPURL(op, "defaultFailureURL", cfg.DefaultFailureURL); err != nil {
 			return Config{}, err
 		}
 	}

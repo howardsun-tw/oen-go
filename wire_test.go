@@ -34,28 +34,6 @@ func TestRawStringReadsEveryScalarOenSends(t *testing.T) {
 	}
 }
 
-func TestRawBoolOnlyAcceptsValuesItCanProve(t *testing.T) {
-	tests := []struct {
-		raw   string
-		value bool
-		ok    bool
-	}{
-		{raw: `true`, value: true, ok: true},
-		{raw: `false`, ok: true},
-		{raw: `"true"`, value: true, ok: true},
-		{raw: `"1"`, value: true, ok: true},
-		{raw: `"failed"`, ok: true},
-		{raw: `"indeterminate"`},
-		{raw: `null`},
-		{raw: ``},
-	}
-	for _, test := range tests {
-		value, ok := rawBool(json.RawMessage(test.raw))
-		equal(t, test.ok, ok, test.raw)
-		equal(t, test.value, value, test.raw)
-	}
-}
-
 func TestParseAmountRejectsFractions(t *testing.T) {
 	for _, test := range []struct {
 		raw  string
@@ -82,36 +60,51 @@ func TestParseAmountRejectsFractions(t *testing.T) {
 // offset is undocumented, so the location is a caller decision rather than a
 // guess baked into the SDK.
 func TestParseTimeFollowsTheDocumentedFormats(t *testing.T) {
-	when, ok := parseTime(json.RawMessage(`"2024-04-12T07:40:25.502Z"`), time.UTC)
-	isTrue(t, ok)
+	when, err := parseTime(json.RawMessage(`"2024-04-12T07:40:25.502Z"`), time.UTC)
+	noError(t, err)
 	equal(t, time.Date(2024, 4, 12, 7, 40, 25, 502000000, time.UTC), when.UTC())
 
-	when, ok = parseTime(json.RawMessage(`"2026-09-04T12:34:56+08:00"`), time.UTC)
-	isTrue(t, ok)
+	when, err = parseTime(json.RawMessage(`"2026-09-04T12:34:56+08:00"`), time.UTC)
+	noError(t, err)
 	equal(t, time.Date(2026, 9, 4, 4, 34, 56, 0, time.UTC), when.UTC())
 
 	taipei := time.FixedZone("UTC+8", 8*60*60)
 	for _, raw := range []string{`"2026-09-04 12:34:56"`, `"2026-09-04T12:34:56"`} {
-		when, ok = parseTime(json.RawMessage(raw), time.UTC)
-		isTrue(t, ok, raw)
+		when, err = parseTime(json.RawMessage(raw), time.UTC)
+		noError(t, err)
 		equal(t, time.Date(2026, 9, 4, 12, 34, 56, 0, time.UTC), when.UTC(), raw)
 
-		when, ok = parseTime(json.RawMessage(raw), taipei)
-		isTrue(t, ok, raw)
+		when, err = parseTime(json.RawMessage(raw), taipei)
+		noError(t, err)
 		equal(t, time.Date(2026, 9, 4, 4, 34, 56, 0, time.UTC), when.UTC(), raw)
 	}
 
-	when, ok = parseTime(json.RawMessage(`1757332496`), time.UTC)
-	isTrue(t, ok)
+	// A bare epoch is read only when it arrives as a JSON number.
+	when, err = parseTime(json.RawMessage(`1757332496`), time.UTC)
+	noError(t, err)
 	equal(t, time.Unix(1757332496, 0).UTC(), when.UTC())
 
-	when, ok = parseTime(json.RawMessage(`1757332496789`), time.UTC)
-	isTrue(t, ok)
+	when, err = parseTime(json.RawMessage(`1757332496789`), time.UTC)
+	noError(t, err)
 	equal(t, time.UnixMilli(1757332496789).UTC(), when.UTC())
 
-	for _, raw := range []string{`"not a time"`, `null`, ``, `"2026-13-45"`} {
-		_, ok = parseTime(json.RawMessage(raw), time.UTC)
-		isFalse(t, ok, raw)
+	// Absent values are the zero time without an error.
+	for _, raw := range []string{`null`, ``, `""`, `" "`} {
+		when, err = parseTime(json.RawMessage(raw), time.UTC)
+		noError(t, err)
+		isTrue(t, when.IsZero(), raw)
+		optional, err := optionalTime(json.RawMessage(raw), time.UTC)
+		noError(t, err)
+		isTrue(t, optional == nil, raw)
+	}
+
+	// A value that is present but unreadable is an error, never a silent
+	// zero: "20240412" is a date, not a second in 1970.
+	for _, raw := range []string{`"not a time"`, `"2026-13-45"`, `"20240412"`, `"2024-04-12"`, `1757332496.5`, `true`, `{}`} {
+		_, err = parseTime(json.RawMessage(raw), time.UTC)
+		hasError(t, err, raw)
+		_, err = optionalTime(json.RawMessage(raw), time.UTC)
+		hasError(t, err, raw)
 	}
 }
 
@@ -131,9 +124,4 @@ func TestEnvelopeReadsEitherMessageField(t *testing.T) {
 func TestURLPathSegmentEscapesProviderIdentifiers(t *testing.T) {
 	equal(t, "P20240412QJMAZNML", urlPathSegment("P20240412QJMAZNML"))
 	equal(t, "a%2Fb%3Fc", urlPathSegment("a/b?c"))
-}
-
-func TestTruncateRunesCutsOnRuneBoundaries(t *testing.T) {
-	equal(t, "你e", truncateRunes("你e🙂", 2))
-	equal(t, "abc", truncateRunes("abc", 10))
 }

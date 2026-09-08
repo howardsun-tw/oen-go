@@ -64,22 +64,22 @@ func TestSubscriptionStatusClassification(t *testing.T) {
 // paymentInfo is the one field whose shape changes with the payment method,
 // and it is the field that carries the card number.
 func TestDecodePaymentInfoNeverKeepsAFullCardNumber(t *testing.T) {
-	info := decodePaymentInfo(json.RawMessage(`{
+	info := mustPaymentInfo(t, `{
 		"cardName":"王小明",
 		"cardNum":"4242424242424242",
 		"cardType":"Visa",
 		"method":"card"
-	}`), time.UTC)
+	}`)
 	equal(t, MethodCard, info.Method)
 	equal(t, "4242", info.CardLast4)
 	equal(t, "Visa", info.CardType)
 	equal(t, "王小明", info.CardName)
 
-	masked := decodePaymentInfo(json.RawMessage(`{"cardNum":"424242******4242","cardType":"Visa"}`), time.UTC)
+	masked := mustPaymentInfo(t, `{"cardNum":"424242******4242","cardType":"Visa"}`)
 	equal(t, "4242", masked.CardLast4)
 	equal(t, MethodCard, masked.Method)
 
-	atm := decodePaymentInfo(json.RawMessage(`{
+	atm := mustPaymentInfo(t, `{
 		"bankCode":"812",
 		"bankName":"台新銀行",
 		"account":"98557016831048",
@@ -87,34 +87,48 @@ func TestDecodePaymentInfoNeverKeepsAFullCardNumber(t *testing.T) {
 		"method":"atm",
 		"provider":"szfu",
 		"sk":"171291104995271916"
-	}`), time.UTC)
+	}`)
 	equal(t, MethodATM, atm.Method)
 	equal(t, "812", atm.BankCode)
 	equal(t, "台新銀行", atm.BankName)
 	equal(t, "98557016831048", atm.Account)
 	hasTime(t, atm.ExpiredAt)
 
-	cvs := decodePaymentInfo(json.RawMessage(`{
+	cvs := mustPaymentInfo(t, `{
 		"cvsName":"全家",
 		"code":"ABC179356D9872",
 		"expiredAt":"2025-03-27T03:41:41.000Z"
-	}`), time.UTC)
+	}`)
 	equal(t, MethodCVS, cvs.Method)
 	equal(t, "全家", cvs.CVSName)
 	equal(t, "ABC179356D9872", cvs.Code)
 
 	// Webhooks send the last four digits as a bare string, and LINE Pay sends
 	// its own transaction reference the same way.
-	digits := decodePaymentInfo(json.RawMessage(`"4242"`), time.UTC)
+	digits := mustPaymentInfo(t, `"4242"`)
 	equal(t, "4242", digits.CardLast4)
 	equal(t, "4242", digits.Text)
 
-	reference := decodePaymentInfo(json.RawMessage(`"2024041200112233"`), time.UTC)
+	reference := mustPaymentInfo(t, `"2024041200112233"`)
 	equal(t, "", reference.CardLast4)
 	equal(t, "2024041200112233", reference.Text)
 
-	equal(t, PaymentInfo{}, decodePaymentInfo(json.RawMessage(`null`), time.UTC))
-	equal(t, PaymentInfo{}, decodePaymentInfo(nil, time.UTC))
+	equal(t, PaymentInfo{}, mustPaymentInfo(t, `null`))
+	equal(t, PaymentInfo{}, mustPaymentInfo(t, ``))
+
+	// A paymentInfo that is neither a string nor an object, or whose expiry
+	// cannot be read, is an error rather than a silently blank PaymentInfo.
+	for _, raw := range []string{`4242`, `[1]`, `{"cardNum":"4242","expiredAt":"soon"}`} {
+		_, err := decodePaymentInfo(json.RawMessage(raw), time.UTC)
+		hasError(t, err, raw)
+	}
+}
+
+func mustPaymentInfo(t *testing.T, raw string) PaymentInfo {
+	t.Helper()
+	info, err := decodePaymentInfo(json.RawMessage(raw), time.UTC)
+	noError(t, err)
+	return info
 }
 
 // This is the exact resource from Oen's documentation, so the decoder is

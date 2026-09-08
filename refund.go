@@ -60,7 +60,7 @@ func (c *Client) Refund(ctx context.Context, req RefundRequest) (*Transaction, e
 	if err != nil {
 		return nil, err
 	}
-	resource, err := singleResource(op, resp)
+	resource, err := singleResource(op, resp, "transaction")
 	if err != nil {
 		return nil, err
 	}

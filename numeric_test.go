@@ -30,10 +30,22 @@ func TestNumericOptionalIntTreatsEmptyAsAbsent(t *testing.T) {
 			equal(t, 0, got)
 		})
 	}
-	for _, raw := range []string{`{}`, `[]`, `"x"`} {
+	for _, raw := range []string{`{}`, `[]`, `"x"`, `"+5"`, `"01"`, `1.5`, `9223372036854775808`} {
 		t.Run(raw, func(t *testing.T) {
 			_, err := parseOptionalInt(json.RawMessage(raw))
 			hasError(t, err)
+		})
+	}
+	// Integers follow the same grammar as amounts, so a value accepted as
+	// unitPrice is accepted as quantity too.
+	for _, tt := range []struct {
+		raw  string
+		want int
+	}{{`1.0`, 1}, {`1e2`, 100}, {`"12"`, 12}, {`-3`, -3}} {
+		t.Run(tt.raw, func(t *testing.T) {
+			got, err := parseOptionalInt(json.RawMessage(tt.raw))
+			noError(t, err)
+			equal(t, tt.want, got)
 		})
 	}
 }

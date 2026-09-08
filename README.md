@@ -65,16 +65,23 @@ so `ParseWebhook` decodes and sanitizes the payload and reports
 and requires nonempty string `merchantId` and `id`, a supported `purpose`
 (`charge` or `token`), and a boolean `success`. Successful token callbacks must
 also carry a nonempty string `token`. Missing or malformed fields return
-`ErrInvalidRequest`; status alone is not an outcome flag. Before a callback
-moves money-related state, confirm it with
-`GetTransaction` or `ListOrderTransactions`.
+`ErrInvalidRequest`; status alone is not an outcome flag. `Amount` is
+optional on a callback — read it with `HasAmount`. Before a callback moves
+money-related state, confirm it with `GetTransaction` or
+`ListOrderTransactions`.
 
-**3. Card numbers do not leave the SDK.** Every payload the SDK hands back has
-been through `SanitizeJSON`: PANs are reduced to their last four digits, and
-tokens, CVVs and Oen's `sk` field are replaced with `REDACTED`. `Config.Logf`
-receives one line per request — method, path, status, outcome, duration — and
-never a credential. Scalar `paymentInfo` is reduced to four characters for
-card payments and token callbacks; LINE Pay references are preserved.
+**3. Card numbers in structured fields do not leave the SDK.** Every payload
+the SDK hands back has been through `SanitizeJSON`: PANs under card-number
+keys are reduced to their last four digits, and tokens, CVVs and Oen's `sk`
+field are replaced with `REDACTED`. `Config.Logf` receives one line per
+request — method, path, status, outcome, duration — and never a credential.
+Scalar `paymentInfo` is reduced to four characters for card payments and
+token callbacks, and for any payload that names no payment method when the
+value looks like a card number (13–19 digits passing Luhn); a payload that
+names LINE Pay or another non-card method keeps its reference intact.
+Free-text fields — `Error.Message`, `WebhookEvent.Message`,
+`Transaction.Note`/`Reason`, `Subscription.Note`/`Reason` — are Oen's own
+text passed through unmodified, so treat them as untrusted before logging.
 
 ## Getting started
 
@@ -217,8 +224,10 @@ Response decoding failures retain the HTTP status and any decoded provider code.
 Malformed monetary values never become zero: transaction and subscription query
 `amount` is required, while absent or null `fee` and `refundAmount` default to
 zero. Oen's cancellation response may omit `amount`; check
-`Subscription.HasAmount` before using that value. Supplied values that are not whole `int64` amounts return
-`ErrUnknownOutcome` (or `ErrInvalidRequest` when parsing a webhook).
+`Subscription.HasAmount` before using that value. Supplied values that are not
+whole `int64` amounts, integers outside the platform range, or timestamps that
+are present but unreadable return `ErrUnknownOutcome` (or `ErrInvalidRequest`
+when parsing a webhook); absent or null timestamps are the zero time.
 
 Local validation failures are `*oen.ValidationError` values that match
 `errors.Is(err, oen.ErrInvalidInput)` and name the offending field. They never

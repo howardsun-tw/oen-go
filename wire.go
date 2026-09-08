@@ -56,39 +56,22 @@ func rawString(raw json.RawMessage) string {
 	return ""
 }
 
-// rawBool reads a boolean that Oen may send as a boolean, a string or a
-// number. The second result is false when the value proves nothing.
-func rawBool(raw json.RawMessage) (bool, bool) {
-	if isNullRaw(raw) {
-		return false, false
-	}
-	var value bool
-	if err := json.Unmarshal(raw, &value); err == nil {
-		return value, true
-	}
-	switch strings.ToLower(rawString(raw)) {
-	case "true", "1", "yes", "success", "succeeded":
-		return true, true
-	case "false", "0", "no", "failed", "failure":
-		return false, true
-	default:
-		return false, false
-	}
-}
-
 // parseOptionalInt preserves absent fields (null or an empty string) while
 // rejecting malformed or out-of-range values instead of silently replacing
-// them with zero.
+// them with zero. It reads integers with the same grammar as amounts so a
+// value that is accepted as unitPrice is also accepted as quantity.
 func parseOptionalInt(raw json.RawMessage) (int, error) {
-	value := rawString(raw)
-	if value == "" && (isNullRaw(raw) || isEmptyString(raw)) {
+	if isNullRaw(raw) || isEmptyString(raw) {
 		return 0, nil
 	}
-	number, err := strconv.Atoi(value)
+	number, err := parseAmount(raw)
 	if err != nil {
 		return 0, fmt.Errorf("expected an integer in range: %w", err)
 	}
-	return number, nil
+	if int64(int(number)) != int64(number) {
+		return 0, fmt.Errorf("expected an integer in range: %d overflows int", number)
+	}
+	return int(number), nil
 }
 
 // parseAmount reads a whole-currency amount. Oen sends amounts as numbers,
@@ -124,48 +107,60 @@ func parseOptionalAmount(raw json.RawMessage) (Amount, error) {
 
 // parseTime reads one Oen timestamp. Oen documents every date field as an ISO
 // date in UTC+0; loc is used only for the undocumented forms that carry no
-// offset, so a caller that has seen local timestamps can say so.
-func parseTime(raw json.RawMessage, loc *time.Location) (time.Time, bool) {
+// offset, so a caller that has seen local timestamps can say so. An absent
+// value (null or an empty string) is the zero time with no error; a value
+// that is present but unreadable is an error, never a silent zero.
+func parseTime(raw json.RawMessage, loc *time.Location) (time.Time, error) {
+	if isNullRaw(raw) || isEmptyString(raw) {
+		return time.Time{}, nil
+	}
+	if isJSONNumber(raw) {
+		// A bare epoch is undocumented but unambiguous when it arrives as a
+		// JSON number. A digit string is not read as one: "20240412" is far
+		// more likely a date than a second in 1970.
+		return parseEpoch(rawString(raw))
+	}
 	value := rawString(raw)
 	if value == "" {
-		return time.Time{}, false
+		return time.Time{}, fmt.Errorf("timestamp %s is not a string", strings.TrimSpace(string(raw)))
 	}
 	if when, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return when, true
+		return when, nil
 	}
 	if loc == nil {
 		loc = time.UTC
 	}
 	for _, layout := range []string{"2006-01-02T15:04:05.999999999", "2006-01-02 15:04:05.999999999"} {
 		if when, err := time.ParseInLocation(layout, value, loc); err == nil {
-			return when, true
+			return when, nil
 		}
 	}
+	return time.Time{}, fmt.Errorf("timestamp %q is not an ISO date", value)
+}
+
+func parseEpoch(value string) (time.Time, error) {
 	number, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, fmt.Errorf("timestamp %q is not a whole epoch: %w", value, err)
 	}
 	if number > 100000000000 {
-		return time.UnixMilli(number).UTC(), true
+		return time.UnixMilli(number).UTC(), nil
 	}
-	return time.Unix(number, 0).UTC(), true
+	return time.Unix(number, 0).UTC(), nil
 }
 
-func firstTime(loc *time.Location, values ...json.RawMessage) time.Time {
-	for _, raw := range values {
-		if when, ok := parseTime(raw, loc); ok {
-			return when
-		}
+// optionalTime reads a timestamp that may be absent, returning nil for it.
+func optionalTime(raw json.RawMessage, loc *time.Location) (*time.Time, error) {
+	when, err := parseTime(raw, loc)
+	if err != nil || when.IsZero() {
+		return nil, err
 	}
-	return time.Time{}
+	return &when, nil
 }
 
-func optionalTime(raw json.RawMessage, loc *time.Location) *time.Time {
-	when, ok := parseTime(raw, loc)
-	if !ok {
-		return nil
-	}
-	return &when
+func isJSONNumber(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && (trimmed[0] == '-' || (trimmed[0] >= '0' && trimmed[0] <= '9'))
 }
 
 func isEmptyString(raw json.RawMessage) bool {
@@ -185,14 +180,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func truncateRunes(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 func urlPathSegment(value string) string { return url.PathEscape(value) }

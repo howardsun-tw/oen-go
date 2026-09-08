@@ -56,25 +56,26 @@ func (c *Client) CheckoutBaseURL() string { return c.cfg.CheckoutBaseURL }
 
 type response struct {
 	status int
-	header http.Header
 	body   []byte
 	env    envelope
 }
 
-func (c *Client) post(ctx context.Context, op, path string, payload any) (response, error) {
+// send encodes payload as JSON and performs one request with the given
+// method. Only POST and PUT carry a body.
+func (c *Client) send(ctx context.Context, op, method, path string, payload any) (response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return response{}, &Error{Op: op, Kind: KindInvalidInput, Err: fmt.Errorf("encode request: %w", err)}
 	}
-	return c.do(ctx, op, http.MethodPost, path, body)
+	return c.do(ctx, op, method, path, body)
+}
+
+func (c *Client) post(ctx context.Context, op, path string, payload any) (response, error) {
+	return c.send(ctx, op, http.MethodPost, path, payload)
 }
 
 func (c *Client) put(ctx context.Context, op, path string, payload any) (response, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return response{}, &Error{Op: op, Kind: KindInvalidInput, Err: fmt.Errorf("encode request: %w", err)}
-	}
-	return c.do(ctx, op, http.MethodPut, path, body)
+	return c.send(ctx, op, http.MethodPut, path, payload)
 }
 
 func (c *Client) get(ctx context.Context, op, path string) (response, error) {
@@ -90,13 +91,7 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	defer cancel()
 
 	started := c.cfg.Now()
-	var reader *bytes.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
-	} else {
-		reader = bytes.NewReader(nil)
-	}
-	request, err := http.NewRequestWithContext(callCtx, method, c.cfg.BaseURL+path, reader)
+	request, err := http.NewRequestWithContext(callCtx, method, c.cfg.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return response{}, &Error{Op: op, Kind: KindInvalidInput, Err: fmt.Errorf("build request: %w", err)}
 	}
@@ -112,8 +107,9 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	httpResponse, err := c.httpClient.Do(request)
 	duration := c.cfg.Now().Sub(started)
 	if err != nil {
-		// A transport failure after the request left the process proves
-		// nothing about whether Oen applied it.
+		// A transport failure may have happened after the request left the
+		// process; the SDK cannot tell, so it proves nothing about whether
+		// Oen applied it.
 		c.log(method, path, 0, KindUnknownOutcome, duration)
 		return response{}, unknownOutcome(op, fmt.Errorf("transport failure: %w", err))
 	}
@@ -133,21 +129,12 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 
 	var env envelope
 	decodeErr := json.Unmarshal(raw, &env)
-	var envPtr *envelope
-	if decodeErr == nil {
-		envPtr = &env
-	}
-	if classified := classify(op, method, httpResponse.StatusCode, httpResponse.Header, envPtr, decodeErr, c.cfg.Now()); classified != nil {
+	if classified := classify(op, method, httpResponse.StatusCode, httpResponse.Header, &env, decodeErr, c.cfg.Now()); classified != nil {
 		c.log(method, path, httpResponse.StatusCode, classified.Kind, duration)
 		return response{}, classified
 	}
 	c.log(method, path, httpResponse.StatusCode, "success", duration)
-	return response{
-		status: httpResponse.StatusCode,
-		header: httpResponse.Header.Clone(),
-		body:   raw,
-		env:    env,
-	}, nil
+	return response{status: httpResponse.StatusCode, body: raw, env: env}, nil
 }
 
 // readLimited reads one byte past the accepted size so an oversized body is

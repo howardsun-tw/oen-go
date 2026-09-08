@@ -62,10 +62,15 @@ type WebhookEvent struct {
 	Status         TransactionStatus
 	Action         Action
 
-	Amount   Amount
-	Currency string
-	OrderID  string
-	Customer Customer
+	// Amount is the callback's amount. Read it together with HasAmount: a
+	// token callback carries none, and a charge callback that omits it must
+	// be confirmed with [Client.GetTransaction] before the value is trusted.
+	Amount Amount
+	// HasAmount distinguishes an omitted amount from zero.
+	HasAmount bool
+	Currency  string
+	OrderID   string
+	Customer  Customer
 	// CustomID is the value the caller passed as CustomID when it opened the
 	// hosted page.
 	CustomID string
@@ -189,67 +194,80 @@ func (c *Client) ParseWebhook(raw []byte) (*WebhookEvent, error) {
 		return nil, &Error{Op: op, Kind: KindInvalidRequest, Err: fmt.Errorf("sanitize webhook: %w", err)}
 	}
 
-	// Decode returned fields from the sanitized copy. The successful token
-	// was captured explicitly above and is the only secret intentionally returned.
-	if err := json.Unmarshal(redacted, &wire); err != nil {
+	// Every returned field is read from the sanitized copy, decoded into a
+	// fresh struct so nothing from the raw pass can survive. The successful
+	// token was captured above and is the only secret intentionally returned.
+	var clean wireWebhook
+	if err := json.Unmarshal(redacted, &clean); err != nil {
 		return nil, invalidWebhookField("payload", "cannot decode sanitized callback")
 	}
 
-	amount, err := parseOptionalAmount(wire.Amount)
+	amount, err := parseOptionalAmount(clean.Amount)
 	if err != nil {
 		return nil, invalidWebhookField("amount", "expected a whole number")
 	}
-	items, err := webhookItems(wire.ProductDetails)
+	items, err := webhookItems(clean.ProductDetails)
 	if err != nil {
 		return nil, err
 	}
 
-	period, err := parseOptionalInt(wire.Period)
+	period, err := parseOptionalInt(clean.Period)
 	if err != nil {
 		return nil, invalidWebhookField("period", "expected an integer in range")
 	}
-	numberOfPeriods, err := parseOptionalInt(wire.NumberOfPeriods)
+	numberOfPeriods, err := parseOptionalInt(clean.NumberOfPeriods)
 	if err != nil {
 		return nil, invalidWebhookField("numberOfPeriods", "expected an integer in range")
 	}
 	loc := c.cfg.NaiveTimeLocation
-	status := TransactionStatus(rawString(wire.Status))
+	paymentInfo, err := decodePaymentInfo(clean.PaymentInfo, loc)
+	if err != nil {
+		return nil, invalidWebhookField("paymentInfo", err.Error())
+	}
+	paidAt, err := optionalTime(clean.PaidAt, loc)
+	if err != nil {
+		return nil, invalidWebhookField("paidAt", err.Error())
+	}
+	if paidAt == nil {
+		if paidAt, err = optionalTime(clean.OccurredAt, loc); err != nil {
+			return nil, invalidWebhookField("occurredAt", err.Error())
+		}
+	}
+	nextChargeAt, err := optionalTime(clean.NextChargeAt, loc)
+	if err != nil {
+		return nil, invalidWebhookField("nextChargeAt", err.Error())
+	}
 
-	event := &WebhookEvent{
+	return &WebhookEvent{
 		MerchantID:      merchantID,
 		Purpose:         purpose,
 		Success:         success,
 		HasOutcome:      true,
+		EventID:         id,
 		PayloadSHA256:   sha256Hex(raw),
 		ID:              id,
-		TransactionHID:  rawString(wire.TransactionHID),
-		Status:          status,
-		Action:          Action(rawString(wire.Action)),
+		TransactionHID:  rawString(clean.TransactionHID),
+		Status:          TransactionStatus(rawString(clean.Status)),
+		Action:          Action(rawString(clean.Action)),
 		Amount:          amount,
-		Currency:        rawString(wire.Currency),
-		OrderID:         rawString(wire.OrderID),
-		Customer:        Customer{ID: rawString(wire.UserID), Name: rawString(wire.UserName), Email: rawString(wire.UserEmail)},
-		CustomID:        rawString(wire.CustomID),
-		PaymentMethod:   PaymentMethod(rawString(wire.PaymentMethod)),
-		PaymentInfo:     decodePaymentInfo(wire.PaymentInfo, loc),
-		AuthCode:        rawString(wire.AuthCode),
+		HasAmount:       !isNullRaw(clean.Amount),
+		Currency:        rawString(clean.Currency),
+		OrderID:         rawString(clean.OrderID),
+		Customer:        Customer{ID: rawString(clean.UserID), Name: rawString(clean.UserName), Email: rawString(clean.UserEmail)},
+		CustomID:        rawString(clean.CustomID),
+		PaymentMethod:   PaymentMethod(rawString(clean.PaymentMethod)),
+		PaymentInfo:     paymentInfo,
+		AuthCode:        rawString(clean.AuthCode),
 		Items:           items,
-		PaidAt:          optionalTime(wire.PaidAt, loc),
-		SubscriptionID:  rawString(wire.SubscriptionID),
+		PaidAt:          paidAt,
+		Token:           token,
+		SubscriptionID:  rawString(clean.SubscriptionID),
 		Period:          period,
 		NumberOfPeriods: numberOfPeriods,
-		NextChargeAt:    optionalTime(wire.NextChargeAt, loc),
-		Message:         truncateRunes(rawString(wire.Message), 500),
+		NextChargeAt:    nextChargeAt,
+		Message:         rawString(clean.Message),
 		RedactedPayload: redacted,
-	}
-	if event.PaidAt == nil {
-		event.PaidAt = optionalTime(wire.OccurredAt, loc)
-	}
-	if purpose == PurposeToken && success {
-		event.Token = token
-	}
-	event.EventID = event.ID
-	return event, nil
+	}, nil
 }
 
 // WriteAck writes the acknowledgement Oen expects.

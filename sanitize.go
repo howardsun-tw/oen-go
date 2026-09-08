@@ -65,6 +65,14 @@ func redactedResource(resource json.RawMessage) json.RawMessage {
 }
 
 func sanitizeValue(key string, value any) any {
+	return sanitizeNode(key, value, false)
+}
+
+// sanitizeNode walks one value. maskPANs is set inside a paymentInfo subtree
+// whose payment method is card or unknown: there, any scalar that looks like
+// a card number is reduced to its last four digits even when its key is not
+// one of the documented card keys.
+func sanitizeNode(key string, value any, maskPANs bool) any {
 	switch {
 	case isSecretKey(key):
 		return redactedValue
@@ -78,36 +86,133 @@ func sanitizeValue(key string, value any) any {
 	switch value := value.(type) {
 	case map[string]any:
 		clean := make(map[string]any, len(value))
+		context := paymentContextOf(value)
 		for childKey, childValue := range value {
+			childMask := maskPANs
 			// Oen also places card data in a scalar paymentInfo field. Its
-			// meaning depends on siblings; LINE Pay references stay intact.
-			if normalizeKey(childKey) == "paymentinfo" && cardPaymentContext(value) {
-				switch scalar := childValue.(type) {
-				case string:
-					clean[childKey] = lastFour(scalar)
-					continue
-				case json.Number:
-					clean[childKey] = lastFour(scalar.String())
+			// meaning depends on siblings: a card payment or token binding
+			// always carries the card number, LINE Pay carries its own
+			// reference, and a payload that says nothing is masked whenever
+			// the value looks like a card number.
+			if normalizeKey(childKey) == "paymentinfo" && context != paymentContextOther {
+				if masked, ok := maskPaymentInfoScalar(childValue, context); ok {
+					clean[childKey] = masked
 					continue
 				}
+				childMask = true
 			}
-			clean[childKey] = sanitizeValue(childKey, childValue)
+			clean[childKey] = sanitizeNode(childKey, childValue, childMask)
 		}
 		return clean
 	case []any:
 		clean := make([]any, len(value))
 		for i, childValue := range value {
-			clean[i] = sanitizeValue("", childValue)
+			clean[i] = sanitizeNode("", childValue, maskPANs)
 		}
 		return clean
+	case string:
+		if maskPANs && looksLikeCardNumber(value) {
+			return lastFour(value)
+		}
+		return value
+	case json.Number:
+		if maskPANs && looksLikeCardNumber(value.String()) {
+			return lastFour(value.String())
+		}
+		return value
 	default:
 		return value
 	}
 }
 
+// paymentContext is what a payload says about its own payment method.
+type paymentContext int
+
+const (
+	// paymentContextUnknown means the payload names no payment method.
+	paymentContextUnknown paymentContext = iota
+	// paymentContextCard is a card payment or a token binding.
+	paymentContextCard
+	// paymentContextOther is a non-card method such as LINE Pay, whose
+	// paymentInfo is a reference rather than a card number.
+	paymentContextOther
+)
+
+func paymentContextOf(object map[string]any) paymentContext {
+	context := paymentContextUnknown
+	for key, value := range object {
+		text, ok := value.(string)
+		if !ok {
+			continue
+		}
+		text = strings.TrimSpace(text)
+		switch normalizeKey(key) {
+		case "purpose":
+			if strings.EqualFold(text, string(PurposeToken)) {
+				return paymentContextCard
+			}
+		case "paymentmethod", "method":
+			if strings.EqualFold(text, string(MethodCard)) {
+				return paymentContextCard
+			}
+			if text != "" {
+				context = paymentContextOther
+			}
+		}
+	}
+	return context
+}
+
+// maskPaymentInfoScalar reduces a scalar paymentInfo to its last four
+// characters. A card context always masks; an unknown context masks only a
+// value that looks like a card number, so a bare reference is preserved.
+func maskPaymentInfoScalar(value any, context paymentContext) (any, bool) {
+	var text string
+	switch scalar := value.(type) {
+	case string:
+		text = scalar
+	case json.Number:
+		text = scalar.String()
+	default:
+		return nil, false
+	}
+	if context == paymentContextCard || looksLikeCardNumber(text) {
+		return lastFour(text), true
+	}
+	return value, true
+}
+
+// looksLikeCardNumber reports a 13 to 19 digit string that passes the Luhn
+// check, which every card number does and which provider references such
+// as LINE Pay transaction ids almost never do.
+func looksLikeCardNumber(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 13 || len(value) > 19 {
+		return false
+	}
+	sum := 0
+	double := false
+	for i := len(value) - 1; i >= 0; i-- {
+		digit := int(value[i] - '0')
+		if digit < 0 || digit > 9 {
+			return false
+		}
+		if double {
+			digit *= 2
+			if digit > 9 {
+				digit -= 9
+			}
+		}
+		sum += digit
+		double = !double
+	}
+	return sum%10 == 0
+}
+
+var keySeparators = strings.NewReplacer("_", "", "-", "", " ", "")
+
 func normalizeKey(key string) string {
-	key = strings.ToLower(strings.TrimSpace(key))
-	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(key)
+	return keySeparators.Replace(strings.ToLower(strings.TrimSpace(key)))
 }
 
 // isSecretKey covers the reusable payment token, card security codes and the
@@ -138,25 +243,4 @@ func lastFour(value string) string {
 		return value
 	}
 	return string(runes[len(runes)-4:])
-}
-
-func cardPaymentContext(object map[string]any) bool {
-	for key, value := range object {
-		text, ok := value.(string)
-		if !ok {
-			continue
-		}
-		text = strings.TrimSpace(text)
-		switch normalizeKey(key) {
-		case "purpose":
-			if text == string(PurposeToken) {
-				return true
-			}
-		case "paymentmethod", "method":
-			if text == string(MethodCard) {
-				return true
-			}
-		}
-	}
-	return false
 }

@@ -45,7 +45,7 @@ func (c *Client) GetTransaction(ctx context.Context, transactionID string) (*Tra
 	if err != nil {
 		return nil, err
 	}
-	resource, err := singleResource(op, resp)
+	resource, err := singleResource(op, resp, "transaction")
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func (c *Client) CancelSubscription(ctx context.Context, req CancelSubscriptionR
 }
 
 func (c *Client) subscriptionFrom(op string, resp response, requireAmount bool) (*Subscription, error) {
-	resource, err := singleResource(op, resp)
+	resource, err := singleResource(op, resp, "subscription")
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +157,11 @@ func (c *Client) decodeTransactionPage(op string, resp response) (*TransactionPa
 	return &TransactionPage{Transactions: transactions, NextPage: nextPage}, nil
 }
 
-// singleResource unwraps the resource Oen puts in data. Some endpoints return
-// the resource directly and some wrap it in one more object.
-func singleResource(op string, resp response) (json.RawMessage, error) {
+// singleResource unwraps the resource Oen puts in data. Every documented
+// endpoint returns the resource directly; the wrapper key is accepted only
+// when the outer object is not itself the resource, so a nested object of
+// another kind can never be mistaken for the one the caller asked for.
+func singleResource(op string, resp response, wrapperKey string) (json.RawMessage, error) {
 	data := resp.env.Data
 	if isNullRaw(data) {
 		return nil, unknownResponseOutcome(op, resp, errNoField("data"))
@@ -168,9 +170,9 @@ func singleResource(op string, resp response) (json.RawMessage, error) {
 	if err := json.Unmarshal(data, &object); err != nil {
 		return nil, unknownResponseOutcome(op, resp, fmt.Errorf("decode data: %w", err))
 	}
-	for _, key := range []string{"transaction", "subscription", "item"} {
-		if value := object[key]; !isNullRaw(value) {
-			return value, nil
+	if isNullRaw(object["id"]) {
+		if wrapped := object[wrapperKey]; !isNullRaw(wrapped) {
+			return wrapped, nil
 		}
 	}
 	return data, nil
@@ -178,7 +180,11 @@ func singleResource(op string, resp response) (json.RawMessage, error) {
 
 // listResources reads a list of resources and its page token. An envelope
 // shape the SDK cannot read is an error, never an empty list: an empty list
-// would read as "the provider holds nothing", which is a different fact.
+// would read as "the provider holds nothing", which is a different fact. The
+// shapes that do mean "nothing": a bare empty array, a known list key that is
+// empty or null, and an object carrying nothing but a page token. Oen's
+// published examples show only non-empty lists, so the empty shapes are the
+// SDK's assumption until a real empty response is captured.
 func listResources(data json.RawMessage) ([]json.RawMessage, string, error) {
 	if isNullRaw(data) {
 		return nil, "", errNoField("data")
@@ -187,24 +193,28 @@ func listResources(data json.RawMessage) ([]json.RawMessage, string, error) {
 	if err := json.Unmarshal(data, &list); err == nil {
 		return list, "", nil
 	}
-	var wrapper struct {
-		Transactions []json.RawMessage `json:"transactions"`
-		Items        []json.RawMessage `json:"items"`
-		Data         []json.RawMessage `json:"data"`
-		Page         json.RawMessage   `json:"page"`
-	}
+	var wrapper map[string]json.RawMessage
 	if err := json.Unmarshal(data, &wrapper); err != nil {
 		return nil, "", fmt.Errorf("decode transaction list: %w", err)
 	}
-	page := rawString(wrapper.Page)
-	switch {
-	case wrapper.Transactions != nil:
-		return wrapper.Transactions, page, nil
-	case wrapper.Items != nil:
-		return wrapper.Items, page, nil
-	case wrapper.Data != nil:
-		return wrapper.Data, page, nil
-	default:
-		return nil, "", fmt.Errorf("transaction list is not an array")
+	page := rawString(wrapper["page"])
+	for _, key := range []string{"transactions", "items", "data"} {
+		raw, present := wrapper[key]
+		if !present {
+			continue
+		}
+		if isNullRaw(raw) {
+			return []json.RawMessage{}, page, nil
+		}
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, "", fmt.Errorf("decode transaction list %q: %w", key, err)
+		}
+		return list, page, nil
 	}
+	for key := range wrapper {
+		if key != "page" {
+			return nil, "", fmt.Errorf("transaction list is not an array")
+		}
+	}
+	return []json.RawMessage{}, page, nil
 }

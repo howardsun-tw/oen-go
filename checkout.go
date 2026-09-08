@@ -106,34 +106,17 @@ type CheckoutSession struct {
 // [CheckoutSession.RedirectURL] is the caller's job.
 func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*CheckoutSession, error) {
 	const op = "CreateCheckout"
-	currency, err := c.validatePurchase(op, req.OrderID, req.Amount, req.Currency, req.Items)
-	if err != nil {
-		return nil, err
-	}
-	successURL, failureURL, err := c.returnURLs(op, req.SuccessURL, req.FailureURL)
+	payload, err := c.hostedPurchasePayload(op, hostedPurchase{
+		orderID: req.OrderID, amount: req.Amount, currency: req.Currency, items: req.Items, customer: req.Customer,
+		successURL: req.SuccessURL, failureURL: req.FailureURL, use3D: req.Use3D, note: req.Note, customID: req.CustomID,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if err := validateProviderDate(op, "expectedPayoutDate", req.ExpectedPayoutDate); err != nil {
 		return nil, err
 	}
-
-	payload := map[string]any{
-		"merchantId":     c.cfg.MerchantID,
-		"amount":         int64(req.Amount),
-		"currency":       currency,
-		"orderId":        req.OrderID,
-		"successUrl":     successURL,
-		"failureUrl":     failureURL,
-		"productDetails": wireLineItems(req.Items),
-	}
-	addCustomer(payload, req.Customer)
-	addOptional(payload, "note", req.Note)
-	addOptional(payload, "customId", req.CustomID)
 	addOptional(payload, "expectedPayoutDate", req.ExpectedPayoutDate)
-	if req.Use3D {
-		payload["use3d"] = true
-	}
 	if len(req.AllowedPaymentMethods) > 0 {
 		payload["allowedPaymentMethods"] = req.AllowedPaymentMethods
 	}
@@ -143,32 +126,15 @@ func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*Chec
 // CreateSubscriptionCheckout opens a hosted page for a recurring payment.
 func (c *Client) CreateSubscriptionCheckout(ctx context.Context, req SubscriptionCheckoutRequest) (*CheckoutSession, error) {
 	const op = "CreateSubscriptionCheckout"
-	currency, err := c.validatePurchase(op, req.OrderID, req.Amount, req.Currency, req.Items)
-	if err != nil {
-		return nil, err
-	}
-	successURL, failureURL, err := c.returnURLs(op, req.SuccessURL, req.FailureURL)
+	payload, err := c.hostedPurchasePayload(op, hostedPurchase{
+		orderID: req.OrderID, amount: req.Amount, currency: req.Currency, items: req.Items, customer: req.Customer,
+		successURL: req.SuccessURL, failureURL: req.FailureURL, use3D: req.Use3D, note: req.Note, customID: req.CustomID,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if err := validatePeriods(op, req.NumberOfPeriods); err != nil {
 		return nil, err
-	}
-
-	payload := map[string]any{
-		"merchantId":     c.cfg.MerchantID,
-		"amount":         int64(req.Amount),
-		"currency":       currency,
-		"orderId":        req.OrderID,
-		"successUrl":     successURL,
-		"failureUrl":     failureURL,
-		"productDetails": wireLineItems(req.Items),
-	}
-	addCustomer(payload, req.Customer)
-	addOptional(payload, "note", req.Note)
-	addOptional(payload, "customId", req.CustomID)
-	if req.Use3D {
-		payload["use3d"] = true
 	}
 	if req.NumberOfPeriods > 0 {
 		payload["numberOfPeriods"] = req.NumberOfPeriods
@@ -180,34 +146,17 @@ func (c *Client) CreateSubscriptionCheckout(ctx context.Context, req Subscriptio
 // first charge and interval the merchant chooses.
 func (c *Client) CreateScheduleCheckout(ctx context.Context, req ScheduleCheckoutRequest) (*CheckoutSession, error) {
 	const op = "CreateScheduleCheckout"
-	currency, err := c.validatePurchase(op, req.OrderID, req.Amount, req.Currency, req.Items)
-	if err != nil {
-		return nil, err
-	}
-	successURL, failureURL, err := c.returnURLs(op, req.SuccessURL, req.FailureURL)
+	payload, err := c.hostedPurchasePayload(op, hostedPurchase{
+		orderID: req.OrderID, amount: req.Amount, currency: req.Currency, items: req.Items, customer: req.Customer,
+		successURL: req.SuccessURL, failureURL: req.FailureURL, use3D: req.Use3D, note: req.Note, customID: req.CustomID,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if err := validateSchedule(op, req.NumberOfPeriods, req.PaymentInterval, req.StartDate); err != nil {
 		return nil, err
 	}
-
-	payload := map[string]any{
-		"merchantId":     c.cfg.MerchantID,
-		"amount":         int64(req.Amount),
-		"currency":       currency,
-		"orderId":        req.OrderID,
-		"successUrl":     successURL,
-		"failureUrl":     failureURL,
-		"productDetails": wireLineItems(req.Items),
-	}
-	addCustomer(payload, req.Customer)
-	addOptional(payload, "note", req.Note)
-	addOptional(payload, "customId", req.CustomID)
 	addOptional(payload, "startDate", req.StartDate)
-	if req.Use3D {
-		payload["use3d"] = true
-	}
 	if req.NumberOfPeriods > 0 {
 		payload["numberOfPeriods"] = req.NumberOfPeriods
 	}
@@ -256,6 +205,59 @@ func (c *Client) hostedPage(ctx context.Context, op, path, redirectPath string, 
 		TransactionHID: rawString(data.TransactionHID),
 		RedirectURL:    c.checkoutURL(redirectPath, id),
 	}, nil
+}
+
+// hostedPurchase is what every amount-bearing hosted page has in common.
+type hostedPurchase struct {
+	orderID    string
+	amount     Amount
+	currency   string
+	items      []LineItem
+	customer   Customer
+	successURL string
+	failureURL string
+	use3D      bool
+	note       string
+	customID   string
+}
+
+// purchasePayload validates and encodes the fields every amount-bearing
+// request shares: token charges and hosted pages alike.
+func (c *Client) purchasePayload(op, orderID string, amount Amount, currency string, items []LineItem, customer Customer) (map[string]any, error) {
+	resolvedCurrency, err := c.validatePurchase(op, orderID, amount, currency, items)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{
+		"merchantId":     c.cfg.MerchantID,
+		"amount":         int64(amount),
+		"currency":       resolvedCurrency,
+		"orderId":        orderID,
+		"productDetails": wireLineItems(items),
+	}
+	addCustomer(payload, customer)
+	return payload, nil
+}
+
+// hostedPurchasePayload adds the return URLs and hosted-page options that
+// the three purchase pages share on top of purchasePayload.
+func (c *Client) hostedPurchasePayload(op string, req hostedPurchase) (map[string]any, error) {
+	payload, err := c.purchasePayload(op, req.orderID, req.amount, req.currency, req.items, req.customer)
+	if err != nil {
+		return nil, err
+	}
+	successURL, failureURL, err := c.returnURLs(op, req.successURL, req.failureURL)
+	if err != nil {
+		return nil, err
+	}
+	payload["successUrl"] = successURL
+	payload["failureUrl"] = failureURL
+	addOptional(payload, "note", req.note)
+	addOptional(payload, "customId", req.customID)
+	if req.use3D {
+		payload["use3d"] = true
+	}
+	return payload, nil
 }
 
 func addCustomer(payload map[string]any, customer Customer) {

@@ -42,7 +42,8 @@ type TokenSubscriptionRequest struct {
 	InvoiceInfo *InvoiceInfo
 	// NumberOfPeriods is the total number of charges; zero means open-ended.
 	NumberOfPeriods int
-	// PaymentInterval is the gap between charges in months, 1 to 12.
+	// PaymentInterval is the gap between charges in months, 1 to 12. Zero
+	// leaves Oen's default of one month.
 	PaymentInterval int
 	// StartDate is the first charge date, yyyy/MM/dd in UTC+8. Leave it empty
 	// to charge immediately.
@@ -166,19 +167,11 @@ func (c *Client) tokenPayload(
 	if token == "" {
 		return nil, newValidationError(op, "token", "card token is required")
 	}
-	resolvedCurrency, err := c.validatePurchase(op, orderID, amount, currency, items)
+	payload, err := c.purchasePayload(op, orderID, amount, currency, items, customer)
 	if err != nil {
 		return nil, err
 	}
-	payload := map[string]any{
-		"merchantId":     c.cfg.MerchantID,
-		"amount":         int64(amount),
-		"currency":       resolvedCurrency,
-		"orderId":        orderID,
-		"token":          token,
-		"productDetails": wireLineItems(items),
-	}
-	addCustomer(payload, customer)
+	payload["token"] = token
 	return payload, nil
 }
 

@@ -27,6 +27,16 @@ Every request carries `Content-Type: application/json` and
 `Authorization: Bearer {authToken}`. Every response is
 `{"code":"","message":"","data":{}}`.
 
+Hosted page redirects, from each endpoint's description in the collection
+("取得 Response 後 轉址至"), all on the hosted-page host above:
+
+| Endpoint | Payer is sent to |
+| --- | --- |
+| `POST /checkout` | `/checkout/{data.id}` |
+| `POST /checkout-subscription` | `/checkout/subscription/{data.id}` |
+| `POST /checkout-schedule` | `/checkout/schedule/{data.id}` |
+| `POST /checkout-token` | `/checkout/subscription/create/{data.id}` |
+
 ## Endpoints
 
 | Operation | Endpoint | SDK | Used by hyper `howard/xsy-2003-billing-schema` |
@@ -106,11 +116,32 @@ own responses and sending an empty string is not the same as sending nothing.
   `charge` or `token`, and boolean `success`. A successful token callback must
   carry a nonempty string `token`. Parsing still does not authenticate it.
 - Transaction and subscription query `amount` is required. Cancellation may
-  omit it and sets `Subscription.HasAmount=false`. Supplied
-  monetary fields must parse as whole `int64` amounts; malformed values are
-  errors, never implicit zeroes. Missing or null optional amounts remain zero.
-- Card and token webhook scalar `paymentInfo` values are redacted before
-  building returned DTOs; LINE Pay transaction references remain intact.
+  omit it and sets `Subscription.HasAmount=false`; a webhook may omit it and
+  sets `WebhookEvent.HasAmount=false`. Supplied monetary fields must parse as
+  whole `int64` amounts; malformed values are errors, never implicit zeroes.
+  Missing or null optional amounts remain zero. Optional integers (`period`,
+  `numberOfPeriods`, `quantity`) use the same grammar as amounts and must
+  also fit the platform `int`.
+- Timestamps that are present but unreadable are errors on every resource
+  and on webhooks; absent or null timestamps are the zero time. A bare epoch
+  is read only when it arrives as a JSON number, never from a digit string.
+- Scalar `paymentInfo` is redacted before building returned DTOs when the
+  payload names a card payment or token binding, or names no payment method
+  and the value looks like a card number (13–19 digits passing Luhn); LINE
+  Pay and other explicitly non-card references remain intact. Inside a
+  `paymentInfo` object or array in those contexts, any scalar that looks like
+  a card number is reduced to its last four digits regardless of its key.
+- Free-text fields (`message`, `note`, `reason`) are passed through
+  unmodified; the SDK does not mask card numbers embedded in prose.
+- Single resources are read directly from `data`; the `{"transaction":{}}` /
+  `{"subscription":{}}` wrapper is unwrapped only for the endpoint's own kind
+  and only when the outer object carries no `id`.
+- Transaction lists: a bare array, a known list key (`transactions`, `items`,
+  `data`) that is empty or null, or an object with nothing but `page` is an
+  empty list; any other object shape is `ErrUnknownOutcome`. The published
+  examples show only non-empty lists, so the empty shapes are an assumption.
+- Return URLs (per request and `Config.DefaultSuccessURL`/`DefaultFailureURL`)
+  must be absolute `http` or `https` URLs and are refused locally otherwise.
 - Response parsing errors preserve the HTTP status and decoded provider code.
 
 ## Not implemented, and why
