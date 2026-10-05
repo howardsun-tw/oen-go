@@ -66,7 +66,12 @@ func TestAllEndpointsFromConsumer(t *testing.T) {
 	if _, err := client.Refund(ctx, oen.RefundRequest{TransactionHID: charged.TransactionHID, Amount: 1000, Items: items}); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(server.Requests()); got != 12 {
+	if _, err := client.ListStoreSubscriptions(ctx, oen.ListStoreSubscriptionsRequest{
+		Statuses: []oen.StoreSubscriptionStatus{oen.StoreSubscriptionOngoing},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(server.Requests()); got != 13 {
 		t.Fatalf("expected one request per endpoint, got %d", got)
 	}
 }

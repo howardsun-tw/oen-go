@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
 // maxResponseBytes bounds one response body. Oen's largest documented
@@ -31,14 +33,7 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Keep the caller's transport, timeout and cookie jar without mutating
-	// their client. Redirects can replay a POST, so the SDK always stops at
-	// the first response and classifies a redirect as an unknown outcome.
-	httpClient := *normalized.HTTPClient
-	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-	return &Client{cfg: normalized, httpClient: &httpClient}, nil
+	return &Client{cfg: normalized, httpClient: httpx.WithoutRedirects(normalized.HTTPClient)}, nil
 }
 
 // MerchantID returns the merchant this client acts for.
@@ -119,7 +114,7 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	}
 	defer func() { _ = httpResponse.Body.Close() }()
 
-	raw, err := readLimited(httpResponse)
+	raw, err := httpx.ReadLimited(httpResponse, maxResponseBytes)
 	if err != nil {
 		failure := unknownResponseOutcome(op, response{status: httpResponse.StatusCode}, err)
 		if httpResponse.StatusCode == http.StatusTooManyRequests {
@@ -139,19 +134,6 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	}
 	c.log(method, path, httpResponse.StatusCode, "success", duration)
 	return response{status: httpResponse.StatusCode, body: raw, env: env}, nil
-}
-
-// readLimited reads one byte past the accepted size so an oversized body is
-// detected rather than silently truncated.
-func readLimited(httpResponse *http.Response) ([]byte, error) {
-	raw, err := io.ReadAll(io.LimitReader(httpResponse.Body, maxResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read response body: %w", err)
-	}
-	if len(raw) > maxResponseBytes {
-		return nil, errors.New("response body exceeds 1 MiB")
-	}
-	return raw, nil
 }
 
 func (c *Client) log(method, path string, status int, outcome any, duration time.Duration) {

@@ -11,8 +11,10 @@ package oentest
 import (
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,8 +95,8 @@ type Server struct {
 
 	// closed unblocks Hang waiters when Close runs, so Close cannot deadlock
 	// on an in-flight hang while still avoiding an empty HTTP 200.
-	closed     chan struct{}
-	closeOnce  sync.Once
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // New starts a fake that answers every documented endpoint successfully.
@@ -247,9 +249,9 @@ func (s *Server) LastRequest(endpoint string) Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := routeKey(normalizePath(endpoint))
-	for i := len(s.requests) - 1; i >= 0; i-- {
-		if routeKey(s.requests[i].Path) == key {
-			return cloneRequest(s.requests[i])
+	for _, v := range slices.Backward(s.requests) {
+		if routeKey(v.Path) == key {
+			return cloneRequest(v)
 		}
 	}
 	return Request{}
@@ -376,6 +378,8 @@ func (s *Server) defaultResponse(method, path string, body []byte) Response {
 	case method == http.MethodGet && strings.HasPrefix(path, "/order/") && strings.HasSuffix(path, "/transactions"):
 		orderID := strings.TrimSuffix(strings.TrimPrefix(path, "/order/"), "/transactions")
 		return s.listResponse(s.orderTransactions(orderID))
+	case method == http.MethodGet && path == "/subscriptions":
+		return s.storeSubscriptionsResponse()
 	case method == http.MethodGet && strings.HasPrefix(path, "/subscriptions/"):
 		return s.subscriptionResponse(strings.TrimPrefix(path, "/subscriptions/"), false, "")
 	case method == http.MethodPut && strings.HasPrefix(path, "/subscriptions/"):
@@ -522,6 +526,20 @@ func (s *Server) subscriptionResponse(id string, cancel bool, reason string) Res
 	return Response{Code: successCode, Data: cloneMap(subscription)}
 }
 
+// storeSubscriptionsResponse answers the Oen store recurring-order list.
+// The API cannot create store orders, so the default list is empty; queue a
+// response to return rows.
+func (s *Server) storeSubscriptionsResponse() Response {
+	s.mu.Lock()
+	token := s.nextPageToken
+	s.mu.Unlock()
+	data := map[string]any{"subscriptions": []any{}, "page": nil}
+	if token != "" {
+		data["page"] = token
+	}
+	return Response{Code: successCode, Data: data}
+}
+
 func (s *Server) orderTransactions(orderID string) []map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -644,9 +662,7 @@ func cloneMap(value map[string]any) map[string]any {
 		return nil
 	}
 	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = item
-	}
+	maps.Copy(clone, value)
 	return clone
 }
 

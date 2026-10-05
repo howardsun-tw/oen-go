@@ -2,6 +2,8 @@
 
 An unofficial Go client for the [Oen Tech Payment API](https://documenter.getpostman.com/view/26861354/2sBY4MuLoX)
 (應援科技金流). It covers every endpoint Oen documents, plus webhook parsing.
+The [`subscription`](#subscription-api) package covers Oen's separate
+[Subscription API](https://developer.oen.tw/products/subscription-api/).
 
 Not affiliated with or endorsed by 應援科技.
 
@@ -26,8 +28,8 @@ should mean.
 
 ## Three rules worth reading before the API
 
-**1. Nothing is ever retried for you.** Oen offers no idempotency key on any
-endpoint, so a resent charge is a second charge. When a state-changing request
+**1. Nothing is ever retried for you.** The Payment API offers no idempotency
+key on any endpoint, so a resent charge is a second charge. When a state-changing request
 does not produce a clear answer — a timeout, a dropped connection, an HTTP
 429 or 5xx, a body that is not JSON, or the provider's own `F0001` — the SDK returns
 an error that satisfies `errors.Is(err, oen.ErrUnknownOutcome)`. The money may
@@ -59,8 +61,8 @@ Reads (`GetTransaction`, `ListOrderTransactions`, `ListTransactions`,
 `GetSubscription`) are safe for *you* to repeat; the SDK still will not do it
 on its own.
 
-**2. A webhook is a claim, not a proof.** Oen publishes no webhook signature,
-so `ParseWebhook` decodes and sanitizes the payload and reports
+**2. A webhook is a claim, not a proof.** The Payment API publishes no webhook
+signature, so `ParseWebhook` decodes and sanitizes the payload and reports
 `Verified: false` every time. It checks that the callback names your merchant
 and requires nonempty string `merchantId` and `id`, a supported `purpose`
 (`charge` or `token`), and a boolean `success`. Successful token callbacks must
@@ -192,6 +194,12 @@ subscription, err = client.CancelSubscription(ctx, oen.CancelSubscriptionRequest
 refunded, err := client.Refund(ctx, oen.RefundRequest{
     TransactionHID: transaction.ID, Amount: 1000, Items: items,
 })
+
+// Recurring orders sold through the Oen store (應援商店定期購), which are not
+// Payment API subscriptions.
+orders, err := client.ListStoreSubscriptions(ctx, oen.ListStoreSubscriptionsRequest{
+    Statuses: []oen.StoreSubscriptionStatus{oen.StoreSubscriptionRetryScheduled},
+})
 ```
 
 Oen has two identifiers per transaction: `Transaction.ID` is the HID
@@ -200,6 +208,63 @@ is the other one. `TransactionStatus` answers `IsPending`, `IsPaid`,
 `IsFailed` and `IsRefunded`; a status this SDK version does not know answers
 false to all of them and `Known()` reports false, so a new provider state can
 never be read as a settled outcome.
+
+## Subscription API
+
+Oen's Subscription API is a separate product: products and plans you define,
+one shared subscription page, trials, plan changes, end-of-period
+cancellation and signed webhooks. It has its own host
+(`https://subscription-api.oen.tw`, production only), its own `sub_sk_` keys
+with scopes, and its own error format, so it lives in its own package with its
+own `Client`.
+
+```go
+import "github.com/howardsun-tw/oen-go/subscription"
+
+client, err := subscription.New(subscription.Config{
+    APIKey: os.Getenv("OEN_SUBSCRIPTION_API_KEY"), // sub_sk_…
+})
+
+sub, err := client.GetSubscription(ctx, "sub_…")
+if sub.Status == subscription.StatusPaused {
+    link, err := client.CreateRecoveryLink(ctx, sub.ID)
+}
+
+result, err := client.CancelSubscription(ctx, subscription.KeyedRequest{
+    SubscriptionID: sub.ID,
+    IdempotencyKey: cancelKey, // store it before sending
+})
+if subscription.RetryableWithSameKey(err) {
+    // Oen returns the original result for a resend with the same key.
+}
+```
+
+What differs from the Payment API:
+
+- **Idempotency keys.** Plan change, period change, cancel, resume, terminate,
+  refund and webhook resend require `IdempotencyKey`; the SDK refuses to send
+  them without one. After a timeout, a transport failure or a 5xx other than
+  `SA027`, `RetryableWithSameKey(err)` is true and the same key may be resent. Product, plan and customer writes and
+  recovery links take no key: an unknown outcome there may mean the write
+  applied.
+- **Errors** are `*subscription.Error` with Oen's `Errno` (`SA002`, `X023`, …).
+  `Kind` follows the HTTP status, except where Oen's meaning differs: `SA015`
+  and `SA025` are `KindInProgress` (query, do not resend), `SA027` is
+  `KindDeclined`, and `X016` is `KindConflict`.
+- **Webhooks are signed.** `WebhookVerifier{Secret: "sub_whsec_…"}.Verify(body,
+  r.Header)` checks `OenPay-Signature` against the raw body, accepts either
+  signature during a secret rotation, and rejects timestamps more than 5
+  minutes from the local clock. Deduplicate by `Event.ID`.
+- **Undocumented fields stay raw.** Oen documents few response fields. Typed
+  fields are `Subscription.ID`, `Status` and `NextChargeAt`, every resource's
+  `ID`, `Page.Next`, and the webhook's subscription and payment detail.
+  Everything else is in a sanitized `Raw` or `Result.Data`. Request bodies Oen
+  does not document (plan change, period change, refund, updates) are a
+  `Fields` map you build.
+
+There is no testing environment for the Subscription API, so this package has
+been tested only against local fakes. See
+[`docs/api-coverage.md`](docs/api-coverage.md#subscription-api).
 
 ## Errors
 

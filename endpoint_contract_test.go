@@ -116,11 +116,22 @@ func endpointCalls() map[string]func(context.Context, *Client) error {
 			_, err := c.CancelSubscription(ctx, CancelSubscriptionRequest{SubscriptionID: "S1"})
 			return err
 		},
+		"GET /subscriptions": func(ctx context.Context, c *Client) error {
+			_, err := c.ListStoreSubscriptions(ctx, ListStoreSubscriptionsRequest{})
+			return err
+		},
 		"POST /refunds/:transactionHid": func(ctx context.Context, c *Client) error {
 			_, err := c.Refund(ctx, RefundRequest{TransactionHID: "P1", Amount: 1000, Items: testItems()})
 			return err
 		},
 	}
+}
+
+// portalOnlyEndpoints are documented on developer.oen.tw but absent from the
+// Postman collections the snapshot records, so they have no official response
+// example. Their tests build responses from the documented field tables.
+var portalOnlyEndpoints = map[string]bool{
+	"GET /subscriptions": true,
 }
 
 func contractConfig(baseURL string) Config {
@@ -136,7 +147,7 @@ func contractConfig(baseURL string) Config {
 func TestEveryOfficialEndpointAcceptsItsPublishedResponses(t *testing.T) {
 	calls := endpointCalls()
 	endpoints := officialEndpoints(t)
-	equal(t, len(endpoints), len(calls))
+	equal(t, len(endpoints)+len(portalOnlyEndpoints), len(calls))
 	for _, endpoint := range endpoints {
 		key := endpoint.Method + " " + endpoint.Path
 		call, ok := calls[key]

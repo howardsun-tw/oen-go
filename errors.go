@@ -4,9 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
 // Response codes from Oen's official code table. Any other code is treated by
@@ -258,7 +259,7 @@ func classify(op, method string, status int, headers http.Header, env *envelope,
 			Op:         op,
 			Kind:       KindRateLimited,
 			HTTPStatus: status,
-			RetryAfter: parseRetryAfter(headers, now),
+			RetryAfter: httpx.ParseRetryAfter(headers, now),
 			Code:       envCode(env),
 			Message:    envMessage(env),
 			Err:        cause,
@@ -341,32 +342,6 @@ func providerError(op string, status int, code, message string) *Error {
 
 func normalizeCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
-}
-
-func parseRetryAfter(headers http.Header, now time.Time) time.Duration {
-	value := strings.TrimSpace(headers.Get("Retry-After"))
-	if value == "" {
-		return 0
-	}
-	// A very large valid delay must not wrap to zero and trigger an
-	// immediate retry. Saturate at the representable duration limit.
-	const maxDelay = time.Duration(1<<63 - 1)
-	seconds, err := strconv.ParseUint(value, 10, 64)
-	switch {
-	case err == nil:
-		if seconds > uint64(maxDelay/time.Second) {
-			return maxDelay
-		}
-		return time.Duration(seconds) * time.Second
-	case errors.Is(err, strconv.ErrRange):
-		return maxDelay
-	}
-	if when, err := http.ParseTime(value); err == nil {
-		if delay := when.Sub(now); delay > 0 {
-			return delay
-		}
-	}
-	return 0
 }
 
 // unknownResponseOutcome retains the response context even when its data

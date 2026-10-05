@@ -3,9 +3,10 @@ package oen
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
 const defaultTimeout = 10 * time.Second
@@ -91,6 +92,15 @@ func (cfg Config) normalized() (Config, error) {
 	}
 	if cfg.AuthToken == "" {
 		return Config{}, newValidationError(op, "authToken", "auth token is required")
+	}
+	// net/http refuses to send a header value with control characters, and
+	// that refusal surfaces as a transport failure, which would read as an
+	// unknown outcome for a request that never left the process.
+	if !httpx.PrintableASCII(cfg.AuthToken) {
+		return Config{}, newValidationError(op, "authToken", "auth token must be printable ASCII")
+	}
+	if httpx.HasControlChars(cfg.UserAgent) {
+		return Config{}, newValidationError(op, "userAgent", "user agent must not contain control characters")
 	}
 
 	switch cfg.Environment {
@@ -180,24 +190,15 @@ func validateMerchantID(op, merchantID string) error {
 }
 
 func validateBaseURL(op, field, value string) error {
-	if err := validateHTTPURL(op, field, value); err != nil {
-		return err
-	}
-	// Literal delimiters would swallow an appended endpoint path. Escaped
-	// delimiters in a path prefix are valid and remain untouched.
-	if strings.ContainsAny(value, "?#") {
-		return newValidationError(op, field, "base URL must not contain a query string or fragment")
+	if problem := httpx.CheckBaseURL(value); problem != "" {
+		return newValidationError(op, field, problem)
 	}
 	return nil
 }
 
 func validateHTTPURL(op, field, value string) error {
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return newValidationError(op, field, fmt.Sprintf("%q is not an absolute URL", value))
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return newValidationError(op, field, fmt.Sprintf("%q must use http or https", value))
+	if problem := httpx.CheckHTTPURL(value); problem != "" {
+		return newValidationError(op, field, problem)
 	}
 	return nil
 }

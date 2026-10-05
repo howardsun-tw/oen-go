@@ -18,7 +18,10 @@
 // sanitized: PANs are reduced to their last four digits and provider secrets
 // are replaced with "REDACTED". See [SanitizeJSON].
 //
-// Webhook payloads are parsed, not authenticated. Oen publishes no webhook
-// signature, so [Client.ParseWebhook] always reports Verified as false and a
+// Webhook payloads are parsed, not authenticated. The Payment API publishes no
+// webhook signature, so [Client.ParseWebhook] always reports Verified as false and a
 // parsed event is never on its own proof that money moved.
+//
+// Oen's separate Subscription API is in package
+// github.com/howardsun-tw/oen-go/subscription.
 package oen

@@ -110,13 +110,13 @@ func TestTransportFailureIsAnUnknownOutcome(t *testing.T) {
 func TestClientIsUsableFromManyGoroutines(t *testing.T) {
 	server, client := newFake(t)
 	done := make(chan error, 8)
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		go func() {
 			_, err := client.ListOrderTransactions(context.Background(), "ORDER00001")
 			done <- err
 		}()
 	}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		noError(t, <-done)
 	}
 	equal(t, 8, server.Count("/order/{orderId}/transactions"))

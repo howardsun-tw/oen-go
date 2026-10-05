@@ -8,6 +8,7 @@ What this SDK implements, measured against Oen's own documentation.
 | --- | --- | --- |
 | [Oen Tech Payment API (全幕前交易)](https://documenter.getpostman.com/view/26861354/2sBY4MuLoX) | 12 endpoints including the token endpoints, the webhook table, the transaction and subscription resources, and the response code table | The contract this SDK implements |
 | [Oen Tech Payment API](https://documenter.getpostman.com/view/26859697/2s9YsQ7VJA) | 9 endpoints; identical apart from the three token endpoints, which it does not list | Cross-check only |
+| [應援金流文件 — 查詢商店定期購訂單列表](https://developer.oen.tw/api/list-subscriptions/) | `GET /subscriptions`: query parameters, response field table and error codes; no response example | `ListStoreSubscriptions` (retrieved 2026-10-05) |
 
 Both collections were read on 2026-09-08 through the Postman documenter API.
 The only difference found is coverage: `POST /checkout-token`,
@@ -53,10 +54,21 @@ Hosted page redirects, from each endpoint's description in the collection
 | 查詢定期定額明細 | `GET /subscriptions/:subscriptionId` | `GetSubscription` | no |
 | 取消定期定額 | `PUT /subscriptions/:subscriptionId` | `CancelSubscription` | no |
 | 退款 | `POST /refunds/:transactionHid` | `Refund` | no |
+| 查詢商店定期購訂單列表 | `GET /subscriptions?status&page` | `ListStoreSubscriptions` | no |
 | Webhook callback | (merchant endpoint) | `ParseWebhook`, `WriteAck` | yes |
 
 Every documented endpoint is implemented. The SDK adds no endpoint that Oen
 does not document.
+
+`GET /subscriptions` is documented only on developer.oen.tw, not in either
+Postman collection. It lists recurring orders sold through the Oen store
+(應援商店定期購), not Payment API subscriptions. Every row field is optional in
+Oen's table; `subscriptions` and `page` are always present. The SDK treats a
+missing or non-array `subscriptions` as `ErrUnknownOutcome`, refuses status
+values outside `ongoing`, `retryScheduled`, `error`, `cancelled` and `done`
+locally, and keeps `items` as sanitized raw JSON because its elements are not
+described. With no published response example, its tests use a response
+built from the field table; the official-snapshot test counts it separately.
 
 Rechecked both collections on 2026-09-08: the newer collection has 12 endpoints,
 the older has 9, and their union has 12. The versioned snapshot in
@@ -154,16 +166,16 @@ own responses and sending an empty string is not the same as sending nothing.
 
 | Capability | Status |
 | --- | --- |
-| Webhook signature verification | Oen publishes no signature. `WebhookEvent.Verified` is always false. |
+| Webhook signature verification | The Payment API publishes no signature (the Subscription API does; see below). `WebhookEvent.Verified` is always false. |
 | Card-binding lookup | Oen has no endpoint that returns a binding by its `/checkout-token` session or `customId` (confirmed with Oen on 2026-09-05; they were building one). Confirm before assuming it exists. |
-| Idempotency keys | Not offered on any endpoint. This is why no request is ever retried automatically. |
+| Idempotency keys | Not offered on any Payment API endpoint. This is why no request is ever retried automatically. |
 | Currencies other than TWD | Oen documents `TWD` only; the SDK refuses anything else locally. |
 | Invoice queries, payout queries, CRM operations | Not in either collection. |
 
 ## Not verified against a live provider
 
-All 12 HTTP endpoints have been exercised with the official response snapshot
-and `oentest`. No endpoint has been run against Oen's sandbox in this work.
+All 13 HTTP endpoints have been exercised with `oentest`, and the 12 in the
+Postman collections also with the official response snapshot. No endpoint has been run against Oen's sandbox in this work.
 These provider behaviors remain unverified:
 
 - The `page` token's semantics beyond "pass the previous response's value
@@ -183,12 +195,16 @@ These provider behaviors remain unverified:
   change. Each lane runs build, vet and race tests.
 - `integration/consumer` is the shared independent consumer module. Its runner
   uses a temporary module with the selected toolchain's `go` directive; the
-  same public SDK/fake-server tests cover all 12 endpoints, timeout and rate
-  limits on every version. There is no Go-version-specific SDK code.
+  same public SDK/fake-server tests cover all 13 Payment API endpoints and all
+  23 Subscription API endpoints, the Subscription API webhook signature, and
+  timeout and rate limits for both clients on every version. There is no
+  Go-version-specific SDK code.
 - Every endpoint is tested for the SDK timeout, caller deadline and injected
   HTTP client timeout, both before headers and while reading a stalled body.
 - Every endpoint is tested for cancellation before sending and for 429 with
   normal, empty, HTML, oversized and stalled bodies, without a second request.
+- Transport rules shared by both clients (no redirects, response size limit,
+  `Retry-After` parsing, base URL checks) live in `internal/httpx`.
 - `Retry-After` tests cover integer seconds, HTTP dates, missing/invalid values
   and overflow. Timeouts and rate-limited writes also have charge-then-query
   recovery tests.
@@ -198,3 +214,123 @@ passed build, vet, 425 SDK test items with the race detector, and 4 consumer
 test items, with zero skipped tests. Go 1.27 statement coverage across the SDK
 and fake was 95.4%. These are local results; hosted CI and Oen sandbox execution
 are separate validation steps.
+
+## Subscription API
+
+Package `subscription` implements Oen's separate Subscription API.
+
+### Source
+
+[Subscription API](https://developer.oen.tw/products/subscription-api/),
+retrieved 2026-10-05 (page last updated 2026-09-29). The same text is the
+Subscription API section of `https://developer.oen.tw/llms-full.txt`. It is the
+only source: Oen publishes no per-endpoint reference, OpenAPI file or response
+examples for this product.
+
+Host `https://subscription-api.oen.tw`, production only. Every path starts with
+`/v1`. Every request carries `Authorization: Bearer sub_sk_…`. Success is HTTP
+200 with `{"data": …, "paging"?: {"next": …}}`; an error is
+`{"errno": "…", "message": "…"}` with a status that depends on the error.
+
+### Endpoints
+
+| Method | Path | Scope | SDK | Idempotency-Key |
+| --- | --- | --- | --- | --- |
+| `POST` | `/v1/products` | `write:product` | `CreateProduct` | — |
+| `GET` | `/v1/products` | `read:*` | `ListProducts` | — |
+| `GET` | `/v1/products/{productId}` | `read:*` | `GetProduct` | — |
+| `PUT` | `/v1/products/{productId}` | `write:product` | `UpdateProduct` | — |
+| `GET` | `/v1/products/{productId}/subscription-url` | `read:*` | `GetSubscriptionURL` | — |
+| `POST` | `/v1/products/{productId}/plans` | `write:plan` | `CreatePlan` | — |
+| `GET` | `/v1/products/{productId}/plans` | `read:*` | `ListPlans` | — |
+| `PUT` | `/v1/products/{productId}/plans/{planId}` | `write:plan` | `UpdatePlan` | — |
+| `GET` | `/v1/products/{productId}/subscriptions` | `read:*` | `ListProductSubscriptions` | — |
+| `GET` | `/v1/subscriptions/{id}` | `read:*` | `GetSubscription` | — |
+| `POST` | `/v1/subscriptions/{id}/plan-change` | `write:subscription` | `ChangePlan` | required |
+| `POST` | `/v1/subscriptions/{id}/period-change` | `write:subscription` | `ChangePeriod` | required |
+| `POST` | `/v1/subscriptions/{id}/cancel` | `write:subscription` | `CancelSubscription` | required |
+| `POST` | `/v1/subscriptions/{id}/resume` | `write:subscription` | `ResumeSubscription` | required |
+| `POST` | `/v1/subscriptions/{id}/terminate` | `write:subscription` | `TerminateSubscription` | required |
+| `POST` | `/v1/subscriptions/{id}/refunds` | `write:subscription` | `RefundSubscription` | required |
+| `POST` | `/v1/subscriptions/{id}/recovery-links` | `write:subscription` | `CreateRecoveryLink` | — |
+| `GET` | `/v1/customers` | `read:*` | `ListCustomers` | — |
+| `GET` | `/v1/customers/{customerId}` | `read:*` | `GetCustomer` | — |
+| `PUT` | `/v1/customers/{customerId}` | `write:customer` | `UpdateCustomer` | — |
+| `GET` | `/v1/webhook-deliveries` | `ops:webhook` | `ListWebhookDeliveries` | — |
+| `GET` | `/v1/webhook-deliveries/{deliveryId}` | `ops:webhook` | `GetWebhookDelivery` | — |
+| `POST` | `/v1/webhook-deliveries/{deliveryId}/resend` | `ops:webhook` | `ResendWebhookDelivery` | required |
+| — | merchant webhook endpoint | — | `WebhookVerifier.Verify` | — |
+
+All 23 documented endpoints are implemented.
+
+### What is typed and what is raw
+
+| Documented by Oen | SDK |
+| --- | --- |
+| Create product fields (`name` ≤ 50, `subscriptionType`, `status`, `summary` ≤ 100, `description`, `trialReuse`, `gracePeriodDays`, `basicInfoFields`, https `websiteUrl`/`successRedirectUrl`/`failureRedirectUrl`, `customerServicePhone`, `customerServiceEmail`) | `CreateProductRequest`, validated locally. `basicInfoFields` has no documented shape and is sent verbatim. |
+| Create plan fields (`name` 1–30, `price` ≥ 0, `billingPeriod{unit,interval}`, `trialDays`, `description` ≤ 1000, `status`) | `CreatePlanRequest`, validated locally |
+| Subscription `id`, `status` (6 values), `nextChargeAt` | `Subscription` fields |
+| ID prefixes `sub_`, `prod_`, `plan_`, `cus_`, `evt_` | `ID` on every resource, read from `id` |
+| `paging.next` | `Page.Next` |
+| Webhook `id`, `type`, `created`, `data.subscription.{id,status}`, `data.paymentDetail.{amount,currency}`, 17 event types, signature | `Event`, `EventType`, `WebhookVerifier` |
+
+Not documented, therefore raw: every other response field (`Raw` or
+`Result.Data`, sanitized by `oen.SanitizeJSON`), and the request bodies of
+product, plan and customer updates, plan change, period change, refund and
+cancel/resume/terminate (`Fields map[string]any`; `nil` sends `{}`).
+
+Character limits count Unicode characters, not bytes.
+
+### Assumptions to confirm with Oen
+
+- `nextChargeAt` format: accepted as an RFC 3339 string or whole Unix seconds
+  (the webhook's `created` format). Anything else is an error.
+- Resource responses are a JSON object with `id` at the top level. If Oen nests
+  the subscription inside `data`, `Subscription.ID` is empty and the data is
+  still in `Raw`.
+- Lists return `data` as an array.
+- `POST` endpoints without a documented body (recovery links, resend) are sent
+  `{}`.
+- HTTP 429 is not documented; it is handled as on the Payment API.
+
+### Error classification
+
+`Kind` follows the HTTP status: 400 and 422 `KindInvalidRequest`, 401
+`KindUnauthorized`, 403 `KindForbidden`, 404 `KindNotFound`, 409
+`KindConflict`, 5xx `KindUnknownOutcome`. These error numbers override it:
+
+| Errno | HTTP | Kind | Why |
+| --- | --- | --- | --- |
+| `X016` | 400 | `KindConflict` | Reports the subscription's state, not a malformed request |
+| `SA015` | 409 | `KindInProgress` | Charge pending or undetermined; Oen says query, do not resend |
+| `SA025` | 409 | `KindInProgress` | Refund still processing |
+| `SA027` | 502 | `KindDeclined` | Processor refused the refund; confirm, then use a new key |
+
+A 4xx without `errno`, a redirect, a timeout, a transport failure, an
+unreadable body or a 2xx body without a `data` key is `KindUnknownOutcome`.
+An explicit `"data": null` is a success.
+
+Go's `net/http` replays a request that carries an `Idempotency-Key` header
+when a reused connection fails. The SDK clears `Request.GetBody` so that
+replay cannot happen and every call sends at most one request;
+`TestKeyedWriteIsNotReplayedByTheTransport` reproduces the replay. `RetryableWithSameKey` is true for an
+unknown outcome or a rate limit on a request that carried an Idempotency-Key,
+including `SA010` and `SA028`, which Oen documents as same-key retries.
+
+### Webhook signature
+
+`OenPay-Signature: t=<unix seconds>,v1=<hex>[,v1=<hex>]`, HMAC-SHA256 under the
+`sub_whsec_` secret over `{t}.{raw body}`. Any matching `v1` passes, which
+covers the 24-hour rotation window. Oen sets no time limit and recommends 5
+minutes; `WebhookVerifier.Tolerance` defaults to that and applies in both
+directions. The documentation's local test example signs a
+`payment_intent.succeeded` body copied from Embed; that type is not a
+Subscription API event, and the SDK passes unknown types through unchanged.
+
+### Not verified against a live provider
+
+Oen has no Subscription API testing environment. Every endpoint has been
+exercised only against `httptest` fakes, in the package tests and in the
+consumer module, for method, path, query, headers,
+body, Idempotency-Key, rate limits, 5xx, redirects, timeouts, transport
+failures and malformed bodies. The assumptions above remain unverified.
