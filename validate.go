@@ -121,3 +121,16 @@ func validateProviderDate(op, field, value string) error {
 func errNoField(field string) error {
 	return errors.New("response is missing " + field)
 }
+
+// Empty means the caller opted out; otherwise Oen accepts visible ASCII only.
+func validateIdempotencyKey(op, key string) error {
+	if len(key) > 255 {
+		return newValidationError(op, "IdempotencyKey", "must contain at most 255 visible ASCII characters")
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] < 0x21 || key[i] > 0x7e {
+			return newValidationError(op, "IdempotencyKey", "must contain visible ASCII characters without spaces")
+		}
+	}
+	return nil
+}

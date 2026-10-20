@@ -1,7 +1,7 @@
 # Oen Go SDK
 
 An unofficial Go client for the [Oen Tech Payment API](https://documenter.getpostman.com/view/26861354/2sBY4MuLoX)
-(應援科技金流). It covers every endpoint Oen documents, plus webhook parsing.
+(應援科技金流). It covers the Payment API endpoints listed in [API coverage](docs/api-coverage.md), plus webhook parsing.
 The [`subscription`](#subscription-api) package covers Oen's separate
 [Subscription API](https://developer.oen.tw/products/subscription-api/).
 
@@ -28,8 +28,9 @@ should mean.
 
 ## Three rules worth reading before the API
 
-**1. Nothing is ever retried for you.** The Payment API offers no idempotency
-key on any endpoint, so a resent charge is a second charge. When a state-changing request
+**1. Nothing is ever retried for you.** Payment API writes accept an optional
+`IdempotencyKey`; without one, resending can create a second charge. See
+[Idempotency keys](#idempotency-keys) for protected resends and their limits. When a state-changing request
 does not produce a clear answer — a timeout, a dropped connection, an HTTP
 429 or 5xx, a body that is not JSON, or the provider's own `F0001` — the SDK returns
 an error that satisfies `errors.Is(err, oen.ErrUnknownOutcome)`. The money may
@@ -127,6 +128,65 @@ the caller and use bounded backoff with jitter when a read needs another
 attempt and no useful `Retry-After` was provided. For writes, reconcile the
 outcome first. An empty immediate query is not proof that an earlier request
 will never finish; keep reconciliation and any resend decision in the caller.
+
+## Idempotency keys
+
+Payment API support is optional. Existing callers can leave `IdempotencyKey`
+empty. To opt in, persist a unique key with the operation before its first
+request and set the request field:
+
+```go
+charge := oen.TokenChargeRequest{
+    IdempotencyKey: "order-A001-charge-1",
+    OrderID: "order-A001",
+    Token: token,
+    Amount: 1000,
+    Items: items,
+}
+result, err := client.ChargeToken(ctx, charge)
+```
+
+The field becomes the `Idempotency-Key` header, never a JSON body field.
+Nonempty keys must contain 1–255 visible ASCII characters without spaces;
+invalid keys fail locally with `ErrInvalidInput`. The SDK never generates,
+stores or rotates keys, or retries automatically.
+
+Use the original key, method, path and body for a retry within 24 hours of the
+first request. Completed requests return the saved result, including saved
+errors. A new operation needs a new key. After 24 hours, Oen treats the key
+as new; it no longer protects a retry of the original payment.
+
+A provider `V0001` returned during processing may be saved under the key.
+After correcting that rejected request's body, use a new key. A provider
+validation failure leaves the key unused only if it occurs before processing. SDK-local
+`ErrInvalidInput` failures never send a request and do not consume the key.
+For `I0001`, only the current, conflicting request was rejected: the original
+request may already have applied. Reconcile it before creating a new operation.
+
+| SDK methods | Protection and recovery |
+| --- | --- |
+| `ChargeToken`, `SubscribeToken`, `Refund` | Same-key resend protection; query on `I0003` or `C026`. |
+| `CreateCheckout`, `CreateSubscriptionCheckout`, `CreateScheduleCheckout`, `CreateTokenCheckout` | Saved responses replay, but if creation completed without saving the response, a same-key resend after 5 minutes can create another resource. Query the transaction/subscription first. Card binding cannot be found by order ID; contact Oen. |
+| `CancelSubscription` | Saved responses replay; query the subscription after an uncertain result. |
+
+`/setup3d` and `/check3d` are outside this protection and are not SDK methods.
+Query transaction status when their outcome is uncertain.
+
+| Code | SDK classification | Caller action |
+| --- | --- | --- |
+| `I0001` (`CodeIdempotencyConflict`) | `KindInvalidRequest` | The key was reused with a different request. Reconcile the original operation before deciding on a new one. |
+| `I0002` (`CodeIdempotencyInProgress`) | `KindUnknownOutcome` | Still processing; wait before resending the identical request with the same key within its 24-hour window. |
+| `I0003` (`CodeIdempotencyUnknownOutcome`) | `KindUnknownOutcome` | Query using `Error.ResourceID` or the order ID; never switch keys to charge again. |
+| `C026` (`CodePaymentUnknownOutcome`) | `KindUnknownOutcome` | Query first; never switch keys to charge again. |
+
+For other uncertain writes, reconcile first and apply the endpoint's protection
+limits before deciding whether to resend. The SDK has no blanket retry helper
+because it cannot know the original key age or whether a checkout was created.
+
+Source: [Oen Payment API — Idempotency-Key](https://developer.oen.tw/api/#idempotency-key),
+checked 2026-10-20. The official error table permits a same-key resend for
+`C026`; this guide follows the supplied merchant announcement's query-first
+procedure. Neither permits a new-key charge to resolve an uncertain payment.
 
 ## The token flow
 
@@ -241,7 +301,7 @@ if subscription.RetryableWithSameKey(err) {
 
 What differs from the Payment API:
 
-- **Idempotency keys.** Plan change, period change, cancel, resume, terminate,
+- **Required idempotency keys.** Unlike Payment API optional keys, plan change, period change, cancel, resume, terminate,
   refund and webhook resend require `IdempotencyKey`; the SDK refuses to send
   them without one. After a timeout, a transport failure or a 5xx other than
   `SA027`, `RetryableWithSameKey(err)` is true and the same key may be resent. Product, plan and customer writes and
@@ -274,7 +334,7 @@ message, the HTTP status and a `Kind`.
 | Helper | Kind | What it means |
 | --- | --- | --- |
 | `IsDeclined` | `KindDeclined` | Settled refusal (`T0001`–`T0005`). Nothing moved. |
-| `IsInvalidRequest` | `KindInvalidRequest` | `V0001` (or another V code except `V0002`). Fix the request. |
+| `IsInvalidRequest` | `KindInvalidRequest` | `V0001` (or another V code except `V0002`), or `I0001`. For `I0001`, reconcile the original operation; it may already have applied. For provider `V0001`, a corrected body needs a new key because the error may be saved. |
 | `IsUnauthorized` | `KindUnauthorized` | `A0001` (or another A code). |
 | — | `KindTransactionState` | `V0002`: the target is not in a state that allows this. |
 | `IsRateLimited` | `KindRateLimited` | HTTP 429. Wait `RetryAfter(err)`. |

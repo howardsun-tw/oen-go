@@ -16,6 +16,7 @@ type envelope struct {
 	Message json.RawMessage `json:"message"`
 	Msg     json.RawMessage `json:"msg"`
 	Data    json.RawMessage `json:"data"`
+	Detail  json.RawMessage `json:"detail"`
 }
 
 func envCode(e *envelope) string {

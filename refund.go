@@ -10,6 +10,9 @@ import (
 // Oen refunds against the transaction HID, and the line items must describe
 // what is being refunded and add up to Amount.
 type RefundRequest struct {
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
 	// TransactionHID is the transaction to refund, [Transaction.ID].
 	TransactionHID string
 	// Amount is at least 1 and at most the original amount. Oen decides the
@@ -56,7 +59,7 @@ func (c *Client) Refund(ctx context.Context, req RefundRequest) (*Transaction, e
 		}
 	}
 
-	resp, err := c.post(ctx, op, "/refunds/"+urlPathSegment(req.TransactionHID), payload)
+	resp, err := c.post(ctx, op, "/refunds/"+urlPathSegment(req.TransactionHID), payload, req.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}

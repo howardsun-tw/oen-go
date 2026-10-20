@@ -14,16 +14,20 @@ import (
 // its first letter, and an unrecognised letter is treated as an unknown
 // outcome rather than as a refusal.
 const (
-	CodeSuccess                 = "S0000" // success (執行成功)
-	CodeUnauthorized            = "A0001" // unauthorized (未授權)
-	CodeInvalidRequest          = "V0001" // invalid request (請求錯誤)
-	CodeInvalidTransactionState = "V0002" // invalid transaction state (交易狀態錯誤)
-	CodeTransactionFailed       = "T0001" // transaction failed (交易失敗)
-	CodeInvalidCVV              = "T0002" // invalid CVV (安全碼 CVV 錯誤)
-	CodeCardExpired             = "T0003" // card expired (卡片過期)
-	CodeInsufficientFunds       = "T0004" // insufficient funds (額度不足)
-	CodeCardDeclined            = "T0005" // authorization declined (拒絕授權)
-	CodeSystemError             = "F0001" // system error (系統錯誤)
+	CodeIdempotencyConflict       = "I0001" // same key with a different request
+	CodeIdempotencyInProgress     = "I0002" // retry the same request and key later
+	CodeIdempotencyUnknownOutcome = "I0003" // query; do not charge with a new key
+	CodePaymentUnknownOutcome     = "C026"  // query; do not charge with a new key
+	CodeSuccess                   = "S0000" // success (執行成功)
+	CodeUnauthorized              = "A0001" // unauthorized (未授權)
+	CodeInvalidRequest            = "V0001" // invalid request (請求錯誤)
+	CodeInvalidTransactionState   = "V0002" // invalid transaction state (交易狀態錯誤)
+	CodeTransactionFailed         = "T0001" // transaction failed (交易失敗)
+	CodeInvalidCVV                = "T0002" // invalid CVV (安全碼 CVV 錯誤)
+	CodeCardExpired               = "T0003" // card expired (卡片過期)
+	CodeInsufficientFunds         = "T0004" // insufficient funds (額度不足)
+	CodeCardDeclined              = "T0005" // authorization declined (拒絕授權)
+	CodeSystemError               = "F0001" // system error (系統錯誤)
 )
 
 // Kind classifies the response. Use errors.Is or the exported helpers when
@@ -35,8 +39,10 @@ const (
 	// resending the identical request will be refused again.
 	KindDeclined Kind = "declined"
 
-	// KindInvalidRequest means Oen rejected the request itself. Nothing was
-	// applied; the caller must fix the request.
+	// KindInvalidRequest means Oen rejected this request. For I0001, the
+	// original request with the same key may already have applied; reconcile
+	// it before deciding on a new operation. A provider V0001 may be saved
+	// under the key, so a corrected request needs a new key.
 	KindInvalidRequest Kind = "invalid_request"
 
 	// KindUnauthorized means the auth token or merchant is not accepted.
@@ -100,6 +106,8 @@ type Error struct {
 	Kind Kind
 	// Code is Oen's response code when the response carried one.
 	Code string
+	// ResourceID is detail.resourceId on I0003, for transaction or subscription queries.
+	ResourceID string
 	// Message is Oen's own message text, unmodified.
 	Message string
 	// HTTPStatus is the response status, or 0 when no response arrived.
@@ -324,6 +332,8 @@ func providerError(op string, status int, code, message string) *Error {
 	normalized := normalizeCode(code)
 	kind := KindUnknownOutcome
 	switch {
+	case normalized == CodeIdempotencyConflict:
+		kind = KindInvalidRequest
 	case normalized == CodeSystemError:
 		kind = KindUnknownOutcome
 	case normalized == CodeInvalidTransactionState:

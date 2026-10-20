@@ -7,9 +7,12 @@ import (
 
 // TokenChargeRequest charges a card token once (用 Token 發起單筆交易).
 //
-// Oen has no idempotency key on this endpoint, so the SDK sends it exactly
-// once. See [ChargeResult] for what to do when the answer does not arrive.
+// Set IdempotencyKey on the first attempt to enable optional resend protection.
+// The SDK never retries automatically.
 type TokenChargeRequest struct {
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
 	// OrderID is the merchant's own order reference. Reusing one is what makes
 	// [Client.ListOrderTransactions] able to resolve an uncertain charge.
 	OrderID string
@@ -32,12 +35,15 @@ type TokenChargeRequest struct {
 // TokenSubscriptionRequest starts a recurring charge on a card token
 // (用 Token 發起定期定額交易). Oen then charges the following periods itself.
 type TokenSubscriptionRequest struct {
-	OrderID  string
-	Token    string
-	Amount   Amount
-	Currency string
-	Items    []LineItem
-	Customer Customer
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
+	OrderID        string
+	Token          string
+	Amount         Amount
+	Currency       string
+	Items          []LineItem
+	Customer       Customer
 
 	InvoiceInfo *InvoiceInfo
 	// NumberOfPeriods is the total number of charges; zero means open-ended.
@@ -56,7 +62,8 @@ type TokenSubscriptionRequest struct {
 // An error instead of a result does not always mean the money stayed put:
 // when the error satisfies [ErrUnknownOutcome], call
 // [Client.ListOrderTransactions] with the same OrderID before deciding
-// anything. Sending the charge again is never the right recovery.
+// anything. A protected resend must use the original key and identical request
+// within 24 hours; I0003 and C026 require querying, not another charge.
 type ChargeResult struct {
 	// TransactionHID is Oen's transaction identifier, the one refunds take.
 	TransactionHID string
@@ -89,7 +96,7 @@ func (c *Client) ChargeToken(ctx context.Context, req TokenChargeRequest) (*Char
 	addOptional(payload, "expectedPayoutDate", req.ExpectedPayoutDate)
 	addInvoiceInfo(payload, req.InvoiceInfo)
 
-	resp, err := c.post(ctx, op, "/token/transactions", payload)
+	resp, err := c.post(ctx, op, "/token/transactions", payload, req.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +140,7 @@ func (c *Client) SubscribeToken(ctx context.Context, req TokenSubscriptionReques
 		payload["paymentInterval"] = req.PaymentInterval
 	}
 
-	resp, err := c.post(ctx, op, "/token/subscriptions", payload)
+	resp, err := c.post(ctx, op, "/token/subscriptions", payload, req.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}

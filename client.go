@@ -57,30 +57,33 @@ type response struct {
 
 // send encodes payload as JSON and performs one request with the given
 // method. Only POST and PUT carry a body.
-func (c *Client) send(ctx context.Context, op, method, path string, payload any) (response, error) {
+func (c *Client) send(ctx context.Context, op, method, path string, payload any, key string) (response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return response{}, &Error{Op: op, Kind: KindInvalidInput, Err: fmt.Errorf("encode request: %w", err)}
 	}
-	return c.do(ctx, op, method, path, body)
+	return c.do(ctx, op, method, path, body, key)
 }
 
-func (c *Client) post(ctx context.Context, op, path string, payload any) (response, error) {
-	return c.send(ctx, op, http.MethodPost, path, payload)
+func (c *Client) post(ctx context.Context, op, path string, payload any, key string) (response, error) {
+	return c.send(ctx, op, http.MethodPost, path, payload, key)
 }
 
-func (c *Client) put(ctx context.Context, op, path string, payload any) (response, error) {
-	return c.send(ctx, op, http.MethodPut, path, payload)
+func (c *Client) put(ctx context.Context, op, path string, payload any, key string) (response, error) {
+	return c.send(ctx, op, http.MethodPut, path, payload, key)
 }
 
 func (c *Client) get(ctx context.Context, op, path string) (response, error) {
-	return c.do(ctx, op, http.MethodGet, path, nil)
+	return c.do(ctx, op, http.MethodGet, path, nil, "")
 }
 
 // do performs exactly one HTTP request. It never sends a second one.
-func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (response, error) {
+func (c *Client) do(ctx context.Context, op, method, path string, body []byte, key string) (response, error) {
 	if ctx == nil {
 		return response{}, newValidationError(op, "ctx", "context must not be nil")
+	}
+	if err := validateIdempotencyKey(op, key); err != nil {
+		return response{}, err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
 	defer cancel()
@@ -93,6 +96,12 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	request, err := http.NewRequestWithContext(callCtx, method, c.cfg.BaseURL+path, bodyReader)
 	if err != nil {
 		return response{}, &Error{Op: op, Kind: KindInvalidInput, Err: fmt.Errorf("build request: %w", err)}
+	}
+	// A keyed request with GetBody can be replayed by net/http after a
+	// reused connection fails. Keep retry decisions with the caller.
+	request.GetBody = nil
+	if key != "" {
+		request.Header.Set("Idempotency-Key", key)
 	}
 	request.Header.Set("Authorization", "Bearer "+c.cfg.AuthToken)
 	request.Header.Set("Accept", "application/json")
@@ -129,6 +138,14 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte) (
 	var env envelope
 	decodeErr := json.Unmarshal(raw, &env)
 	if classified := classify(op, method, httpResponse.StatusCode, httpResponse.Header, &env, decodeErr, c.cfg.Now()); classified != nil {
+		if normalizeCode(classified.Code) == CodeIdempotencyUnknownOutcome {
+			var detail struct {
+				ResourceID string `json:"resourceId"`
+			}
+			if json.Unmarshal(env.Detail, &detail) == nil {
+				classified.ResourceID = detail.ResourceID
+			}
+		}
 		c.log(method, path, httpResponse.StatusCode, classified.Kind, duration)
 		return response{}, classified
 	}

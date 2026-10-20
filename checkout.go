@@ -7,6 +7,9 @@ import (
 
 // CheckoutRequest opens Oen's hosted page for one payment (取得單次交易頁面).
 type CheckoutRequest struct {
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
 	// OrderID is the merchant's own order reference (orderId).
 	OrderID string
 	Amount  Amount
@@ -35,11 +38,14 @@ type CheckoutRequest struct {
 // (取得定期定額交易頁面). Oen charges the first period immediately and then
 // charges monthly on the same day.
 type SubscriptionCheckoutRequest struct {
-	OrderID  string
-	Amount   Amount
-	Currency string
-	Items    []LineItem
-	Customer Customer
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
+	OrderID        string
+	Amount         Amount
+	Currency       string
+	Items          []LineItem
+	Customer       Customer
 
 	SuccessURL string
 	FailureURL string
@@ -55,11 +61,14 @@ type SubscriptionCheckoutRequest struct {
 // ScheduleCheckoutRequest opens Oen's hosted page for a recurring payment with
 // a schedule (取得設定未來交易之定期定額交易頁面).
 type ScheduleCheckoutRequest struct {
-	OrderID  string
-	Amount   Amount
-	Currency string
-	Items    []LineItem
-	Customer Customer
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
+	OrderID        string
+	Amount         Amount
+	Currency       string
+	Items          []LineItem
+	Customer       Customer
 
 	SuccessURL string
 	FailureURL string
@@ -83,8 +92,11 @@ type ScheduleCheckoutRequest struct {
 // The token is not in the response. Oen delivers it later on the webhook, and
 // [Client.ParseWebhook] reads it from there.
 type TokenCheckoutRequest struct {
-	SuccessURL string
-	FailureURL string
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
+	SuccessURL     string
+	FailureURL     string
 	// CustomID is echoed back on the token webhook, and is how a caller ties
 	// the callback to the card binding it started.
 	CustomID string
@@ -120,7 +132,7 @@ func (c *Client) CreateCheckout(ctx context.Context, req CheckoutRequest) (*Chec
 	if len(req.AllowedPaymentMethods) > 0 {
 		payload["allowedPaymentMethods"] = req.AllowedPaymentMethods
 	}
-	return c.hostedPage(ctx, op, "/checkout", "/checkout/", payload)
+	return c.hostedPage(ctx, op, "/checkout", "/checkout/", payload, req.IdempotencyKey)
 }
 
 // CreateSubscriptionCheckout opens a hosted page for a recurring payment.
@@ -139,7 +151,7 @@ func (c *Client) CreateSubscriptionCheckout(ctx context.Context, req Subscriptio
 	if req.NumberOfPeriods > 0 {
 		payload["numberOfPeriods"] = req.NumberOfPeriods
 	}
-	return c.hostedPage(ctx, op, "/checkout-subscription", "/checkout/subscription/", payload)
+	return c.hostedPage(ctx, op, "/checkout-subscription", "/checkout/subscription/", payload, req.IdempotencyKey)
 }
 
 // CreateScheduleCheckout opens a hosted page for a recurring payment whose
@@ -163,7 +175,7 @@ func (c *Client) CreateScheduleCheckout(ctx context.Context, req ScheduleCheckou
 	if req.PaymentInterval > 0 {
 		payload["paymentInterval"] = req.PaymentInterval
 	}
-	return c.hostedPage(ctx, op, "/checkout-schedule", "/checkout/schedule/", payload)
+	return c.hostedPage(ctx, op, "/checkout-schedule", "/checkout/schedule/", payload, req.IdempotencyKey)
 }
 
 // CreateTokenCheckout opens the hosted page that binds a card and produces a
@@ -181,11 +193,11 @@ func (c *Client) CreateTokenCheckout(ctx context.Context, req TokenCheckoutReque
 	}
 	addOptional(payload, "customId", req.CustomID)
 	addOptional(payload, "note", req.Note)
-	return c.hostedPage(ctx, op, "/checkout-token", "/checkout/subscription/create/", payload)
+	return c.hostedPage(ctx, op, "/checkout-token", "/checkout/subscription/create/", payload, req.IdempotencyKey)
 }
 
-func (c *Client) hostedPage(ctx context.Context, op, path, redirectPath string, payload map[string]any) (*CheckoutSession, error) {
-	resp, err := c.post(ctx, op, path, payload)
+func (c *Client) hostedPage(ctx context.Context, op, path, redirectPath string, payload map[string]any, key string) (*CheckoutSession, error) {
+	resp, err := c.post(ctx, op, path, payload, key)
 	if err != nil {
 		return nil, err
 	}

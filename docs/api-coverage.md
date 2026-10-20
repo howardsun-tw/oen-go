@@ -2,6 +2,25 @@
 
 What this SDK implements, measured against Oen's own documentation.
 
+## Payment API idempotency update (2026-10-20)
+
+Verified against [the official API guide](https://developer.oen.tw/api/#idempotency-key)
+and [error table](https://developer.oen.tw/api/error-codes/), retrieved through
+[the official text export](https://developer.oen.tw/llms-full.txt).
+All eight write endpoints in the table below accept optional `IdempotencyKey`:
+the four checkout POSTs, both token POSTs, refunds POST and subscriptions PUT.
+Empty keys omit the header. Keys are validated locally; no automatic retries
+are enabled. `I0001` is invalid request; `I0002`, `I0003` and `C026` remain
+unknown outcomes, with `I0003` resource identifiers exposed for queries.
+
+See [README recovery guidance](../README.md#idempotency-keys) for the 24-hour
+window, checkout's 5-minute interrupted-response exception and the distinction
+between Payment API optional keys and Subscription API required keys.
+Header delivery, validation, error handling and transport replay prevention
+are tested locally. Provider replay, retention and interrupted-processing
+behavior have **not** been verified against a live provider. The fake does not
+implement provider idempotency storage.
+
 ## Sources
 
 | Source | Contents | Used for |
@@ -57,8 +76,8 @@ Hosted page redirects, from each endpoint's description in the collection
 | 查詢商店定期購訂單列表 | `GET /subscriptions?status&page` | `ListStoreSubscriptions` | no |
 | Webhook callback | (merchant endpoint) | `ParseWebhook`, `WriteAck` | yes |
 
-Every documented endpoint is implemented. The SDK adds no endpoint that Oen
-does not document.
+Every endpoint in the original Postman snapshot is implemented. This is not
+a claim of full coverage of newer developer portal endpoints.
 
 `GET /subscriptions` is documented only on developer.oen.tw, not in either
 Postman collection. It lists recurring orders sold through the Oen store
@@ -168,7 +187,7 @@ own responses and sending an empty string is not the same as sending nothing.
 | --- | --- |
 | Webhook signature verification | The Payment API publishes no signature (the Subscription API does; see below). `WebhookEvent.Verified` is always false. |
 | Card-binding lookup | Oen has no endpoint that returns a binding by its `/checkout-token` session or `customId` (confirmed with Oen on 2026-09-05; they were building one). Confirm before assuming it exists. |
-| Idempotency keys | Not offered on any Payment API endpoint. This is why no request is ever retried automatically. |
+| 3D `/setup3d`, `/check3d` | Not implemented; excluded from provider idempotency protection. |
 | Currencies other than TWD | Oen documents `TWD` only; the SDK refuses anything else locally. |
 | Invoice queries, payout queries, CRM operations | Not in either collection. |
 

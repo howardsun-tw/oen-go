@@ -71,29 +71,35 @@ func officialEndpoints(t *testing.T) []endpointContract {
 // Every documented operation must have an executable public SDK call. The
 // same calls are used for the timeout and rate-limit conformance checks.
 func endpointCalls() map[string]func(context.Context, *Client) error {
+	return endpointCallsWithKey("")
+}
+
+func endpointCallsWithKey(key string) map[string]func(context.Context, *Client) error {
 	return map[string]func(context.Context, *Client) error{
 		"POST /checkout": func(ctx context.Context, c *Client) error {
-			_, err := c.CreateCheckout(ctx, CheckoutRequest{OrderID: "O1", Amount: 1000, Items: testItems()})
+			_, err := c.CreateCheckout(ctx, CheckoutRequest{IdempotencyKey: key, OrderID: "O1", Amount: 1000, Items: testItems()})
 			return err
 		},
 		"POST /checkout-subscription": func(ctx context.Context, c *Client) error {
-			_, err := c.CreateSubscriptionCheckout(ctx, SubscriptionCheckoutRequest{OrderID: "O1", Amount: 1000, Items: testItems()})
+			_, err := c.CreateSubscriptionCheckout(ctx, SubscriptionCheckoutRequest{IdempotencyKey: key, OrderID: "O1", Amount: 1000, Items: testItems()})
 			return err
 		},
 		"POST /checkout-schedule": func(ctx context.Context, c *Client) error {
-			_, err := c.CreateScheduleCheckout(ctx, ScheduleCheckoutRequest{OrderID: "O1", Amount: 1000, Items: testItems()})
+			_, err := c.CreateScheduleCheckout(ctx, ScheduleCheckoutRequest{IdempotencyKey: key, OrderID: "O1", Amount: 1000, Items: testItems()})
 			return err
 		},
 		"POST /checkout-token": func(ctx context.Context, c *Client) error {
-			_, err := c.CreateTokenCheckout(ctx, TokenCheckoutRequest{CustomID: "B1"})
+			_, err := c.CreateTokenCheckout(ctx, TokenCheckoutRequest{IdempotencyKey: key, CustomID: "B1"})
 			return err
 		},
 		"POST /token/transactions": func(ctx context.Context, c *Client) error {
-			_, err := c.ChargeToken(ctx, testCharge())
+			req := testCharge()
+			req.IdempotencyKey = key
+			_, err := c.ChargeToken(ctx, req)
 			return err
 		},
 		"POST /token/subscriptions": func(ctx context.Context, c *Client) error {
-			_, err := c.SubscribeToken(ctx, TokenSubscriptionRequest{OrderID: "O1", Token: testToken, Amount: 1000, Items: testItems()})
+			_, err := c.SubscribeToken(ctx, TokenSubscriptionRequest{IdempotencyKey: key, OrderID: "O1", Token: testToken, Amount: 1000, Items: testItems()})
 			return err
 		},
 		"GET /transactions/:id": func(ctx context.Context, c *Client) error {
@@ -113,7 +119,7 @@ func endpointCalls() map[string]func(context.Context, *Client) error {
 			return err
 		},
 		"PUT /subscriptions/:subscriptionId": func(ctx context.Context, c *Client) error {
-			_, err := c.CancelSubscription(ctx, CancelSubscriptionRequest{SubscriptionID: "S1"})
+			_, err := c.CancelSubscription(ctx, CancelSubscriptionRequest{IdempotencyKey: key, SubscriptionID: "S1"})
 			return err
 		},
 		"GET /subscriptions": func(ctx context.Context, c *Client) error {
@@ -121,7 +127,7 @@ func endpointCalls() map[string]func(context.Context, *Client) error {
 			return err
 		},
 		"POST /refunds/:transactionHid": func(ctx context.Context, c *Client) error {
-			_, err := c.Refund(ctx, RefundRequest{TransactionHID: "P1", Amount: 1000, Items: testItems()})
+			_, err := c.Refund(ctx, RefundRequest{IdempotencyKey: key, TransactionHID: "P1", Amount: 1000, Items: testItems()})
 			return err
 		},
 	}

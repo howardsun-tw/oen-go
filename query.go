@@ -29,6 +29,9 @@ type TransactionPage struct {
 
 // CancelSubscriptionRequest stops a recurring charge (取消定期定額).
 type CancelSubscriptionRequest struct {
+	// IdempotencyKey optionally protects resends of the same request within 24 hours.
+	// Set it on the first attempt. See the package documentation for limitations.
+	IdempotencyKey string
 	SubscriptionID string
 	// Reason is stored by Oen and shown in its console.
 	Reason string
@@ -123,7 +126,7 @@ func (c *Client) CancelSubscription(ctx context.Context, req CancelSubscriptionR
 	payload := map[string]any{"merchantId": c.cfg.MerchantID}
 	addOptional(payload, "reason", req.Reason)
 
-	resp, err := c.put(ctx, op, "/subscriptions/"+urlPathSegment(req.SubscriptionID), payload)
+	resp, err := c.put(ctx, op, "/subscriptions/"+urlPathSegment(req.SubscriptionID), payload, req.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}
