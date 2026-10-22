@@ -406,3 +406,8 @@ is not, and what has not been verified against a live provider.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Development toolchain
+
+Use Go 1.27.3 for development (`.go-version`) and the pinned Go 1.27 CI lane.
+Both modules retain their Go 1.23 minimum; CI still checks the minimum and latest stable Go.
