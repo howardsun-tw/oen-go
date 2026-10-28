@@ -65,14 +65,28 @@ func redactedResource(resource json.RawMessage) json.RawMessage {
 }
 
 func sanitizeValue(key string, value any) any {
-	return sanitizeNode(key, value, false)
+	return sanitizeNode(key, value, panMaskOff)
 }
 
-// sanitizeNode walks one value. maskPANs is set inside a paymentInfo subtree
-// whose payment method is card or unknown: there, any scalar that looks like
-// a card number is reduced to its last four digits even when its key is not
-// one of the documented card keys.
-func sanitizeNode(key string, value any, maskPANs bool) any {
+// panMask says how a paymentInfo subtree treats scalars that are not under a
+// documented card key.
+type panMask int
+
+const (
+	panMaskOff panMask = iota
+	// panMaskUnknown is a payment method the payload does not name: an
+	// ungrouped Luhn-valid digit string is masked, unless a nested object
+	// names a non-card method.
+	panMaskUnknown
+	// panMaskCard is a card payment or token binding: a card number printed
+	// in groups is masked too.
+	panMaskCard
+)
+
+// sanitizeNode walks one value. Inside a paymentInfo subtree, a scalar that
+// looks like a card number is reduced to its last four digits even when its
+// key is not one of the documented card keys; mask sets how eagerly.
+func sanitizeNode(key string, value any, mask panMask) any {
 	switch {
 	case isSecretKey(key):
 		return redactedValue
@@ -87,8 +101,11 @@ func sanitizeNode(key string, value any, maskPANs bool) any {
 	case map[string]any:
 		clean := make(map[string]any, len(value))
 		context := paymentContextOf(value)
+		if mask == panMaskUnknown && context == paymentContextOther {
+			mask = panMaskOff // For example an ATM account inside paymentInfo.
+		}
 		for childKey, childValue := range value {
-			childMask := maskPANs
+			childMask := mask
 			// Oen also places card data in a scalar paymentInfo field. Its
 			// meaning depends on siblings: a card payment or token binding
 			// always carries the card number, LINE Pay carries its own
@@ -99,7 +116,10 @@ func sanitizeNode(key string, value any, maskPANs bool) any {
 					clean[childKey] = masked
 					continue
 				}
-				childMask = true
+				childMask = panMaskUnknown
+				if context == paymentContextCard {
+					childMask = panMaskCard
+				}
 			}
 			clean[childKey] = sanitizeNode(childKey, childValue, childMask)
 		}
@@ -107,16 +127,16 @@ func sanitizeNode(key string, value any, maskPANs bool) any {
 	case []any:
 		clean := make([]any, len(value))
 		for i, childValue := range value {
-			clean[i] = sanitizeNode("", childValue, maskPANs)
+			clean[i] = sanitizeNode("", childValue, mask)
 		}
 		return clean
 	case string:
-		if maskPANs && looksLikeCardNumber(value) {
+		if mask != panMaskOff && looksLikeCardNumber(value, mask == panMaskCard) {
 			return lastFour(value)
 		}
 		return value
 	case json.Number:
-		if maskPANs && looksLikeCardNumber(value.String()) {
+		if mask != panMaskOff && looksLikeCardNumber(value.String(), false) {
 			return lastFour(value.String())
 		}
 		return value
@@ -180,7 +200,7 @@ func maskPaymentInfoScalar(value any, context paymentContext) (any, bool) {
 	default:
 		return nil, false
 	}
-	if context == paymentContextCard || looksLikeCardNumber(text) {
+	if context == paymentContextCard || looksLikeCardNumber(text, false) {
 		return lastFour(text), true
 	}
 	return value, true
@@ -188,9 +208,15 @@ func maskPaymentInfoScalar(value any, context paymentContext) (any, bool) {
 
 // looksLikeCardNumber reports a 13 to 19 digit string that passes the Luhn
 // check, which every card number does and which provider references such
-// as LINE Pay transaction ids almost never do.
-func looksLikeCardNumber(value string) bool {
+// as LINE Pay transaction ids almost never do. With grouped, spaces and
+// hyphens between digit groups, as in a printed card number, are ignored;
+// that is only safe where the payload says it is a card payment, because a
+// grouped bank account can pass the same check.
+func looksLikeCardNumber(value string, grouped bool) bool {
 	value = strings.TrimSpace(value)
+	if grouped {
+		value = cardNumberSeparators.Replace(value)
+	}
 	if len(value) < 13 || len(value) > 19 {
 		return false
 	}
@@ -212,6 +238,8 @@ func looksLikeCardNumber(value string) bool {
 	}
 	return sum%10 == 0
 }
+
+var cardNumberSeparators = strings.NewReplacer(" ", "", "-", "")
 
 var keySeparators = strings.NewReplacer("_", "", "-", "", " ", "")
 
@@ -240,8 +268,10 @@ func isCardNumberKey(key string) bool {
 	}
 }
 
+// lastFour keeps the last four characters of a card number, ignoring the
+// spaces and hyphens of a grouped one, whose last group may be shorter.
 func lastFour(value string) string {
-	value = strings.TrimSpace(value)
+	value = cardNumberSeparators.Replace(strings.TrimSpace(value))
 	runes := []rune(value)
 	if len(runes) <= 4 {
 		return value

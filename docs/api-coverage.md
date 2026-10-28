@@ -40,13 +40,23 @@ The Postman collection (published 2026-07-15) does not describe signatures.
   read by exact key, and the event ID is computed over UTF-16 code units, so
   `"ID"` beside `"id"` and lone surrogate escapes give the same result as
   Oen's JavaScript receivers. Raw invalid UTF-8 in those fields may still
-  differ.
+  differ. A number in an identity field is written as JavaScript's
+  `Number.prototype.toString` does (`1.0` → `1`, `-0` → `0`, `1e21`,
+  out-of-range values → `null`). Known purposes still require a string
+  `status`; only an unknown purpose can put a number there. An object or
+  array in an identity field is rejected, because its JavaScript key order
+  cannot be reproduced.
 - Unknown purposes fill only the identity fields, `Status`, `OrderID`,
-  `CustomID`, `Message` and `RedactedPayload`, so a field this SDK reads
-  differently for a known purpose cannot reject them.
+  `CustomID`, `Message` and `RedactedPayload`, and are decoded without the
+  typed fields of known purposes, so a field such as `productDetails` that
+  this SDK reads differently for a known purpose cannot reject them.
 - `paymentInfo` on `token`, `schedule_subscription` and
   `subscription_card_changed` is always treated as card data and reduced to
-  its last four characters.
+  its last four characters. Inside a `paymentInfo` object of a card payment,
+  a card number printed in groups (`4242 4242 4242 4242` or with hyphens) is
+  also reduced to its last four digits. Where the payload names no method,
+  only an ungrouped Luhn-valid number is masked, and not inside an object
+  that names a non-card method, so an ATM `account` stays whole.
 
 ## Payment API idempotency update (2026-10-20)
 

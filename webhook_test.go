@@ -156,7 +156,6 @@ func TestWebhookKeepsStatusSeparateFromOutcome(t *testing.T) {
 		equal(t, event.EventID, second.EventID)
 		equal(t, "", seen[event.EventID])
 		seen[event.EventID] = status
-		equal(t, sha256Hex(raw), event.PayloadSHA256)
 	}
 }
 
@@ -307,6 +306,8 @@ func TestVerifyWebhookAcceptsTheDocumentedNotification(t *testing.T) {
 	equal(t, documentedChargeEventID, event.EventID)
 	equal(t, "2HhndgEquCbDzC5OyVxWSGZmd2l", event.ID)
 	equal(t, 2, event.DeliveryAttempt)
+	// Computed with shasum -a 256 over the same body.
+	equal(t, "54a8351e6b47657f22a110175dab9d1369747d1e2c0e09edf147d8d797318b1a", event.PayloadSHA256)
 
 	// The event ID header is optional; the body alone yields the same key.
 	event, err = client.VerifyWebhook([]byte(documentedCharge), signedHeader(header.Get(HeaderSignature), ""))
@@ -341,6 +342,25 @@ func TestVerifyWebhookRejectsForgedNotifications(t *testing.T) {
 			event, err := newSigningClient(t, "ming").VerifyWebhook([]byte(tc.body), signedHeader(tc.signature, tc.eventID))
 			errIs(t, err, ErrInvalidSignature)
 			equal(t, (*WebhookEvent)(nil), event)
+		})
+	}
+}
+
+// Oen documents one v1 today, but any listed v1 that matches authenticates the
+// body, so its position and unreadable neighbours must not matter.
+func TestVerifyWebhookAcceptsAnyMatchingSignature(t *testing.T) {
+	ts := webhookNow.Unix()
+	valid := signWebhook(testWebhookSecret, ts, documentedCharge)
+	wrong := signWebhook("pay_whsec_other", ts, documentedCharge)
+	for name, signature := range map[string]string{
+		"valid before a wrong one":     fmt.Sprintf("t=%d,v1=%s,v1=%s", ts, valid, wrong),
+		"valid before a malformed one": fmt.Sprintf("t=%d,v1=%s,v1=zz", ts, valid),
+		"malformed before a valid one": fmt.Sprintf("t=%d,v1=%s,v1=%s", ts, valid[:62], valid),
+	} {
+		t.Run(name, func(t *testing.T) {
+			event, err := newSigningClient(t, "ming").VerifyWebhook([]byte(documentedCharge), signedHeader(signature, ""))
+			noError(t, err)
+			isTrue(t, event.Verified)
 		})
 	}
 }
@@ -415,6 +435,12 @@ func TestUnknownPurposesParseWithCommonFields(t *testing.T) {
 	isFalse(t, event.HasAmount)
 	contains(t, string(event.RedactedPayload), `"interval":"weekly"`)
 
+	// Field names a known purpose types strictly may hold anything here.
+	// The event ID was computed with Node.js 24.
+	event, err = client.ParseWebhook([]byte(`{"purpose":"payout_settled","merchantId":"ming","id":"payout#1","productDetails":{},"paymentInfo":[1]}`))
+	noError(t, err)
+	equal(t, "evt_807ed1c03ee198774c7d02c4a0f2966d", event.EventID)
+
 	_, err = client.ParseWebhook([]byte(`{"purpose":"payout_settled","merchantId":"someone-else","id":"payout#1"}`))
 	errIs(t, err, ErrInvalidRequest)
 }
@@ -480,6 +506,46 @@ func TestCardPurposesNeverReturnAFullCardNumber(t *testing.T) {
 		equal(t, "4242", event.PaymentInfo.CardLast4)
 		notContains(t, event.PaymentInfo.Text, "4242 4242")
 		notContains(t, string(event.RedactedPayload), "4242 4242")
+	}
+	// A card number printed in groups, or padded, under an undocumented
+	// nested key.
+	for _, pan := range []string{"4242 4242 4242 4242", "4242-4242-4242-4242", `\t4242424242424242\n`} {
+		for _, body := range []string{
+			`{"purpose":"schedule_subscription","merchantId":"ming","id":"s1","success":true,"subscriptionId":"S1","paymentInfo":{"number":"` + pan + `"}}`,
+			`{"purpose":"charge","merchantId":"ming","id":"tx","paymentMethod":"card","paymentInfo":{"number":"` + pan + `"}}`,
+		} {
+			event, err := client.ParseWebhook([]byte(body))
+			noError(t, err)
+			notContains(t, string(event.RedactedPayload), "42424242")
+			notContains(t, string(event.RedactedPayload), "4242 4242")
+			notContains(t, string(event.RedactedPayload), "4242-4242")
+			contains(t, string(event.RedactedPayload), `"number":"4242"`)
+		}
+	}
+	// A last group shorter than four digits still leaves four digits.
+	for pan, want := range map[string]string{"4000-0000-0000-0000-006": "0006", "4222 2222 2222 2": "2222"} {
+		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","paymentMethod":"card",` +
+			`"paymentInfo":{"number":"` + pan + `","cardNum":"` + pan + `"}}`))
+		noError(t, err)
+		contains(t, string(event.RedactedPayload), `"number":"`+want+`"`)
+		contains(t, string(event.RedactedPayload), `"cardNum":"`+want+`"`)
+		equal(t, want, event.PaymentInfo.CardLast4)
+	}
+}
+
+// A bank account can pass the card number check. Where the payload does not
+// say it is a card payment, a grouped account, or any account under a
+// non-card method, must stay whole.
+func TestNonCardPaymentInfoKeepsAccountNumbers(t *testing.T) {
+	client := newSigningClient(t, "ming")
+	for account, paymentInfo := range map[string]string{
+		"1234-5678-9012-3452": `{"bankCode":"812","account":"1234-5678-9012-3452"}`,
+		"1234567890123452":    `{"method":"atm","bankCode":"812","account":"1234567890123452"}`,
+	} {
+		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","paymentInfo":` + paymentInfo + `}`))
+		noError(t, err)
+		equal(t, account, event.PaymentInfo.Account)
+		contains(t, string(event.RedactedPayload), account)
 	}
 }
 
@@ -654,7 +720,8 @@ func TestWebhookRejectsMalformedPurposeFields(t *testing.T) {
 		"invoice with fractional amount":    `{"purpose":"invoice_issued","merchantId":"ming","id":"i","chargeId":"c","invoiceNumber":"ZZ1","invoiceStatus":"issued","invoiceDate":"2026-09-28T02:41:30.000Z","randomNumber":"0000","invoiceAmount":12.5,"createdAt":"2026-09-28T02:41:31.204Z"}`,
 		"refund with unreadable resolvedAt": `{"purpose":"refund","id":"r","resolvedAt":"yesterday"}`,
 		"charge with non-boolean isRetry":   `{"purpose":"charge","merchantId":"ming","id":"tx","isRetry":"yes"}`,
-		"numeric status in event identity":  `{"purpose":"charge","merchantId":"ming","id":"tx","status":1}`,
+		"numeric status on a known purpose": `{"purpose":"charge","merchantId":"ming","id":"tx","status":1}`,
+		"upper-case ID instead of id":       `{"purpose":"token","merchantId":"ming","ID":"tx","success":false}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			event, err := client.ParseWebhook([]byte(body))
@@ -691,6 +758,40 @@ func TestEventIDMatchesJavaScriptEncoding(t *testing.T) {
 			t.Fatalf("%v: %v", body, err)
 		}
 		equal(t, want, event.EventID, body)
+		if strings.Contains(body, `"ID"`) {
+			equal(t, "first", event.ID)
+		}
+	}
+}
+
+// JSON.stringify writes numbers as Number.prototype.toString does, which an
+// unknown purpose may carry in an identity slot. Each expected value was
+// computed with Node.js 24 from the same body.
+func TestEventIDMatchesJavaScriptNumbers(t *testing.T) {
+	client := newSigningClient(t, "ming")
+	for status, want := range map[string]string{
+		"1":                    "evt_c91e9865396ef3e2b786481e1127e7e6",
+		"-1":                   "evt_98bc85710e3e39970ae9397333b20a29",
+		"1.25":                 "evt_60eb89d136db0fca2da9fc4133b06180",
+		"1.0":                  "evt_c91e9865396ef3e2b786481e1127e7e6",
+		"-0":                   "evt_a7b40b7296b2f37e07dc1209a63a65cb",
+		"1e-400":               "evt_a7b40b7296b2f37e07dc1209a63a65cb",
+		"0.1":                  "evt_52190ed8365645877deb3e98e6be81dd",
+		"2.5E+3":               "evt_5cb5f8fe1279b244d434abc3918cfbb0",
+		"0.000001":             "evt_adcd44b2a00a2bff262117382a867062",
+		"1.5e-7":               "evt_d32103910a0c7f8d83457c6cf7bef3b8",
+		"1e20":                 "evt_ab53a43f5339e313a7a3cd94b9852218",
+		"1e21":                 "evt_6b7c0ec838d9c4ff2dfd586a9920bab0",
+		"12345678901234567890": "evt_b63ee814a4c3b7fe284ffd8dda3616fa",
+		"9007199254740993":     "evt_f2c8a3280ffecab3e6d1d355622b326e",
+		"1e400":                "evt_807ed1c03ee198774c7d02c4a0f2966d",
+		"-1e400":               "evt_807ed1c03ee198774c7d02c4a0f2966d",
+	} {
+		event, err := client.ParseWebhook([]byte(`{"purpose":"payout_settled","merchantId":"ming","id":"payout#1","status":` + status + `}`))
+		if err != nil {
+			t.Fatalf("%v: %v", status, err)
+		}
+		equal(t, want, event.EventID, status)
 	}
 }
 

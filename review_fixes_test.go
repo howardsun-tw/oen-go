@@ -63,16 +63,16 @@ func TestScalarPaymentInfoIsMaskedUnlessTheMethodIsKnownToBeNotACard(t *testing.
 }
 
 func TestLooksLikeCardNumberUsesLengthAndLuhn(t *testing.T) {
-	isTrue(t, looksLikeCardNumber("4242424242424242"))
-	isTrue(t, looksLikeCardNumber(" 4111111111111111 "))
-	isTrue(t, looksLikeCardNumber("378282246310005"))
-	isFalse(t, looksLikeCardNumber("4242424242424241"))
-	isFalse(t, looksLikeCardNumber("2024041200112233"))
-	isFalse(t, looksLikeCardNumber("98557016831048"))
-	isFalse(t, looksLikeCardNumber("171291104995271916"))
-	isFalse(t, looksLikeCardNumber("4242"))
-	isFalse(t, looksLikeCardNumber("4242 4242 4242 4242"))
-	isFalse(t, looksLikeCardNumber("42424242424242424242"))
+	isTrue(t, looksLikeCardNumber("4242424242424242", false))
+	isTrue(t, looksLikeCardNumber(" 4111111111111111 ", false))
+	isTrue(t, looksLikeCardNumber("378282246310005", false))
+	isFalse(t, looksLikeCardNumber("4242424242424241", false))
+	isFalse(t, looksLikeCardNumber("2024041200112233", false))
+	isFalse(t, looksLikeCardNumber("98557016831048", false))
+	isFalse(t, looksLikeCardNumber("171291104995271916", false))
+	isFalse(t, looksLikeCardNumber("4242", false))
+	isFalse(t, looksLikeCardNumber("4242 4242 4242 4242", false))
+	isFalse(t, looksLikeCardNumber("42424242424242424242", false))
 }
 
 // A present timestamp that cannot be read is an error on every resource, the

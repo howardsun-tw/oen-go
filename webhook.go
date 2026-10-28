@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -474,6 +475,13 @@ func (c *Client) ParseWebhook(raw []byte) (*WebhookEvent, error) {
 			}
 		}
 	}
+	// Status is a transaction status on every known purpose. Unknown
+	// purposes may use it differently, so it is only read there.
+	if purpose.Known() && !isNullRaw(fields["status"]) {
+		if _, err := requiredWebhookString("status", fields["status"]); err != nil {
+			return nil, err
+		}
+	}
 	var success bool
 	hasOutcome := !isNullRaw(fields["success"]) && json.Unmarshal(fields["success"], &success) == nil
 	if !hasOutcome && !isNullRaw(fields["success"]) && purpose.Known() {
@@ -495,13 +503,6 @@ func (c *Client) ParseWebhook(raw []byte) (*WebhookEvent, error) {
 		return nil, &Error{Op: op, Kind: KindInvalidRequest, Err: fmt.Errorf("sanitize webhook: %w", err)}
 	}
 
-	// Every returned field is read from the sanitized copy, decoded into a
-	// fresh struct so nothing from the raw pass can survive. The successful
-	// token was captured above and is the only secret intentionally returned.
-	var clean wireWebhook
-	if err := json.Unmarshal(redacted, &clean); err != nil {
-		return nil, invalidWebhookField("payload", "cannot decode sanitized callback")
-	}
 	event := &WebhookEvent{
 		MerchantID:      merchantID,
 		Purpose:         purpose,
@@ -511,14 +512,30 @@ func (c *Client) ParseWebhook(raw []byte) (*WebhookEvent, error) {
 		PayloadSHA256:   sha256Hex(raw),
 		ID:              rawString(fields["id"]),
 		Status:          TransactionStatus(rawString(fields["status"])),
-		OrderID:         rawString(clean.OrderID),
-		CustomID:        rawString(clean.CustomID),
-		Message:         rawString(clean.Message),
 		RedactedPayload: redacted,
 	}
+	// Every returned field is read from the sanitized copy, decoded afresh
+	// so nothing from the raw pass can survive. The successful token was
+	// captured above and is the only secret intentionally returned.
 	if !purpose.Known() {
+		// An unknown purpose defines its own fields, so only the common
+		// ones are read, and none of them may fail the event.
+		var common map[string]json.RawMessage
+		if err := json.Unmarshal(redacted, &common); err != nil {
+			return nil, invalidWebhookField("payload", "cannot decode sanitized callback")
+		}
+		event.OrderID = rawString(common["orderId"])
+		event.CustomID = rawString(common["customId"])
+		event.Message = rawString(common["message"])
 		return event, nil
 	}
+	var clean wireWebhook
+	if err := json.Unmarshal(redacted, &clean); err != nil {
+		return nil, invalidWebhookField("payload", "cannot decode sanitized callback")
+	}
+	event.OrderID = rawString(clean.OrderID)
+	event.CustomID = rawString(clean.CustomID)
+	event.Message = rawString(clean.Message)
 
 	var isRetry bool
 	if !isNullRaw(clean.IsRetry) && json.Unmarshal(clean.IsRetry, &isRetry) != nil {
@@ -696,8 +713,8 @@ func webhookItems(details []wireProductItem) ([]LineItem, error) {
 // and the first 32 hex digits of the SHA-256 of JavaScript's
 // JSON.stringify([purpose, merchantId, id, status, success]), with null for
 // an absent field. Oen's own receivers apply it to every purpose. The values
-// are the untrimmed body values. Only strings, booleans and null are
-// accepted, because Go cannot reproduce JavaScript's number formatting.
+// are the untrimmed body values. An object or array is rejected: its
+// JavaScript key order cannot be reproduced from the raw text.
 func webhookEventID(fields map[string]json.RawMessage) (string, error) {
 	identity := []byte{'['}
 	for i, field := range []string{"purpose", "merchantId", "id", "status", "success"} {
@@ -712,8 +729,13 @@ func webhookEventID(fields map[string]json.RawMessage) (string, error) {
 			identity = append(identity, token...)
 		case token[0] == '"':
 			identity = appendJSStringToken(identity, token)
+		case token[0] == '-' || token[0] >= '0' && token[0] <= '9':
+			// Valid JSON number syntax always parses; an out-of-range value
+			// becomes ±Inf, which JSON.stringify writes as null.
+			number, _ := strconv.ParseFloat(string(token), 64)
+			identity = appendJSNumber(identity, number)
 		default:
-			return "", invalidWebhookField(field, "expected a string, boolean or null")
+			return "", invalidWebhookField(field, "expected a string, number, boolean or null")
 		}
 	}
 	identity = append(identity, ']')
@@ -794,6 +816,46 @@ func appendJSStringToken(dst, token []byte) []byte {
 		}
 	}
 	return append(dst, '"')
+}
+
+// appendJSNumber writes a float64 as JavaScript's Number.prototype.toString
+// does (ECMA-262 Number::toString). Both languages pick the shortest digits
+// that round-trip; only the layout of those digits differs.
+func appendJSNumber(dst []byte, number float64) []byte {
+	switch {
+	case math.IsInf(number, 0) || math.IsNaN(number):
+		return append(dst, "null"...)
+	case number == 0: // Also -0, which JavaScript prints as 0.
+		return append(dst, '0')
+	case number < 0:
+		dst = append(dst, '-')
+		number = -number
+	}
+	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(number, 'e', -1, 64), "e")
+	digits := strings.Replace(mantissa, ".", "", 1)
+	k := len(digits)
+	n, _ := strconv.Atoi(exponent)
+	n++ // The value is 0.digits × 10^n.
+	switch {
+	case k <= n && n <= 21:
+		dst = append(dst, digits...)
+		return append(dst, strings.Repeat("0", n-k)...)
+	case 0 < n && n <= 21:
+		return append(append(append(dst, digits[:n]...), '.'), digits[n:]...)
+	case -6 < n && n <= 0:
+		dst = append(dst, "0."...)
+		dst = append(dst, strings.Repeat("0", -n)...)
+		return append(dst, digits...)
+	}
+	dst = append(dst, digits[0])
+	if k > 1 {
+		dst = append(append(dst, '.'), digits[1:]...)
+	}
+	dst = append(dst, 'e')
+	if n-1 >= 0 {
+		dst = append(dst, '+')
+	}
+	return strconv.AppendInt(dst, int64(n-1), 10)
 }
 
 func sha256Hex(raw []byte) string {
