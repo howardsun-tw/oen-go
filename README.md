@@ -1,7 +1,8 @@
 # Oen Go SDK
 
 An unofficial Go client for the [Oen Tech Payment API](https://documenter.getpostman.com/view/26861354/2sBY4MuLoX)
-(應援科技金流). It covers the Payment API endpoints listed in [API coverage](docs/api-coverage.md), plus webhook parsing.
+(應援科技金流). It covers the Payment API endpoints listed in [API coverage](docs/api-coverage.md), plus webhook parsing
+and signature verification.
 The [`subscription`](#subscription-api) package covers Oen's separate
 [Subscription API](https://developer.oen.tw/products/subscription-api/).
 
@@ -62,14 +63,79 @@ Reads (`GetTransaction`, `ListOrderTransactions`, `ListTransactions`,
 `GetSubscription`) are safe for *you* to repeat; the SDK still will not do it
 on its own.
 
-**2. A webhook is a claim, not a proof.** The Payment API publishes no webhook
-signature, so `ParseWebhook` decodes and sanitizes the payload and reports
-`Verified: false` every time. It checks that the callback names your merchant
-and requires nonempty string `merchantId` and `id`, a supported `purpose`
-(`charge` or `token`), and a boolean `success`. Successful token callbacks must
-also carry a nonempty string `token`. Missing or malformed fields return
-`ErrInvalidRequest`; status alone is not an outcome flag. `Amount` is
-optional on a callback — read it with `HasAmount`. Before a callback moves
+**2. Verify webhooks, then still confirm them.** Since Payment API v10.3.5
+(2026-10-21), Oen signs payment notifications once you generate a signing
+secret (`pay_whsec_…`) in the CRM under 總設定 → 開發者 → 應援金流設定. Set
+`Config.WebhookSecret` and call `VerifyWebhook` with the raw body and the
+request headers:
+
+```go
+body, err := io.ReadAll(r.Body) // the raw bytes; re-encoded JSON never matches
+if err != nil {
+    http.Error(w, "unreadable body", http.StatusBadRequest)
+    return
+}
+event, err := client.VerifyWebhook(body, r.Header)
+switch {
+case errors.Is(err, oen.ErrInvalidSignature):
+    http.Error(w, "invalid signature", http.StatusBadRequest) // forged or stale
+    return
+case errors.Is(err, oen.ErrInvalidInput):
+    // Config.WebhookSecret is not set. Fail so Oen retries once it is fixed.
+    http.Error(w, "webhook not configured", http.StatusServiceUnavailable)
+    return
+case err != nil:
+    // Authentic but missing a field Oen documents for its purpose. A resend
+    // carries the same body, so keep the raw body for reconciliation and
+    // acknowledge only once it is stored.
+    if saveUnreadable(body, err) != nil {
+        http.Error(w, "store failed", http.StatusServiceUnavailable)
+        return
+    }
+    oen.WriteAck(w)
+    return
+}
+if !event.Purpose.Known() {
+    oen.WriteAck(w) // Oen adds purposes; skip them with a 2xx, never an error
+    return
+}
+// event.Verified is true. Store it under event.EventID, then oen.WriteAck(w);
+// answer 503 instead if storing fails, so Oen sends it again.
+```
+
+It checks `OenPay-Signature` (`t=<unix seconds>,v1=<hex>`, HMAC-SHA256 over
+`<t>.<body>`), rejects timestamps more than `Config.WebhookTolerance` (default
+5 minutes) from `Config.Now`, and rejects an `OenPay-Event-Id` header that
+differs from the event ID recomputed from the body. Without a configured
+secret it returns `ErrInvalidInput` instead of passing anything through. A
+rotated secret stops verifying immediately; Oen keeps no overlap for the
+Payment API. `VerifyWebhookSignature` checks only the signature, for a body
+you want to authenticate without parsing.
+
+`EventID` is the deduplication key Oen documents (`evt_…`): a resend keeps it,
+and `charging` followed by `charged` for one transaction are two events.
+
+Every documented `purpose` is parsed: `charge`, `token`,
+`schedule_subscription` and `subscription_card_changed`, which Oen sends by
+default, and `refund`, `subscription_cancelled`, `subscription_retry`,
+`invoice_issued` and `invoice_voided`, which Oen sends only after enabling
+"Webhook 新版事件" for you. The purpose-specific parts are in
+`event.Refund`, `event.Cancellation`, `event.Retry` and `event.Invoice`. On
+refund, retry and invoice events `ID` is an event key such as `refund#…`;
+the transaction is `ChargeID`. An unknown `purpose` parses with only the
+common fields and `Purpose.Known()` false.
+
+Without a secret, use `ParseWebhook`: it reports `Verified: false` and the
+callback may be forged. Both methods reject a `merchantId` that names
+another merchant and require the fields Oen documents as always present for
+the purpose, such as `merchantId` and `id` on a charge and a boolean
+`success` on a token callback. Successful token callbacks must also carry a
+nonempty string `token`. Missing or malformed fields return
+`ErrInvalidRequest`. A `charge` that is still `charging` (a CVS code or ATM
+account was just issued) carries no `success`, so `HasOutcome` is false and
+`ChargeSucceeded()` is false; status alone is not an outcome flag. `Amount`
+is optional on a callback — read it with `HasAmount`. A verified
+callback can still be a duplicate or arrive out of order, so before it moves
 money-related state, confirm it with `GetTransaction` or
 `ListOrderTransactions`.
 
@@ -201,7 +267,7 @@ binding, err := client.CreateTokenCheckout(ctx, oen.TokenCheckoutRequest{
 // Redirect the payer to binding.RedirectURL.
 
 // 2. Oen calls your webhook with the token.
-event, err := client.ParseWebhook(body)
+event, err := client.VerifyWebhook(body, r.Header)
 if event.TokenBound() {
     store(event.CustomID, event.Token, event.PaymentInfo.CardLast4)
 }

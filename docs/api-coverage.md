@@ -2,6 +2,52 @@
 
 What this SDK implements, measured against Oen's own documentation.
 
+## Payment API webhook signature update (2026-10-28)
+
+Verified against [the webhook guide](https://developer.oen.tw/developers/webhooks/#確認通知的真假),
+[the webhook object](https://developer.oen.tw/api/objects/webhook/) and the
+[Payment API v10.3.5 changelog entry (2026-10-21)](https://developer.oen.tw/changelog/),
+retrieved through [the official text export](https://developer.oen.tw/llms-full.txt).
+The Postman collection (published 2026-07-15) does not describe signatures.
+
+- `OenPay-Signature: t=<unix seconds>,v1=<hex>`, HMAC-SHA256 under the full
+  `pay_whsec_` secret over `<t>.<raw body>`. Sent only after the merchant
+  generates a secret; once one exists Oen never sends unsigned notifications.
+  `Config.WebhookSecret`, `Client.VerifyWebhook`, `Client.VerifyWebhookSignature`.
+- Oen recommends rejecting timestamps more than 5 minutes off;
+  `Config.WebhookTolerance` defaults to that and applies in both directions.
+- Rotation has no overlap: the old secret stops verifying with the next
+  notification. Any matching `v1` value is accepted.
+- `OenPay-Event-Id` and `OenPay-Delivery-Attempt` are not signed. The event ID
+  is `evt_` plus the first 32 hex digits of SHA-256 over JavaScript's
+  `JSON.stringify([purpose, merchantId, id, status, success])`, with `null` for
+  absent fields. `WebhookEvent.EventID` is that value, recomputed from the
+  body; `VerifyWebhook` rejects a header that differs. Before this update
+  `EventID` was the body's `id`.
+- A Subscription API secret (`sub_whsec_`) in `Config.WebhookSecret` is
+  refused at construction.
+- Every purpose in [the webhook object](https://developer.oen.tw/api/objects/webhook/)
+  is parsed. `charge`, `token`, `schedule_subscription` and
+  `subscription_card_changed` are sent by default; `refund`,
+  `subscription_cancelled`, `subscription_retry`, `invoice_issued` and
+  `invoice_voided` only after Oen enables "Webhook 新版事件". Unknown purposes
+  parse with the common fields; Oen asks receivers to skip them with a 2xx.
+- A `charge` with `status: charging` carries no `success`. Earlier versions
+  of this SDK required it and rejected those notifications.
+- `firstPeriodDiscount`, `originalAmount`, `userPhone` and `transactionId`
+  are not mapped to fields; they remain in `RedactedPayload`.
+- Identity fields (`purpose`, `merchantId`, `id`, `status`, `success`) are
+  read by exact key, and the event ID is computed over UTF-16 code units, so
+  `"ID"` beside `"id"` and lone surrogate escapes give the same result as
+  Oen's JavaScript receivers. Raw invalid UTF-8 in those fields may still
+  differ.
+- Unknown purposes fill only the identity fields, `Status`, `OrderID`,
+  `CustomID`, `Message` and `RedactedPayload`, so a field this SDK reads
+  differently for a known purpose cannot reject them.
+- `paymentInfo` on `token`, `schedule_subscription` and
+  `subscription_card_changed` is always treated as card data and reduced to
+  its last four characters.
+
 ## Payment API idempotency update (2026-10-20)
 
 Verified against [the official API guide](https://developer.oen.tw/api/#idempotency-key)
@@ -74,7 +120,7 @@ Hosted page redirects, from each endpoint's description in the collection
 | 取消定期定額 | `PUT /subscriptions/:subscriptionId` | `CancelSubscription` | no |
 | 退款 | `POST /refunds/:transactionHid` | `Refund` | no |
 | 查詢商店定期購訂單列表 | `GET /subscriptions?status&page` | `ListStoreSubscriptions` | no |
-| Webhook callback | (merchant endpoint) | `ParseWebhook`, `WriteAck` | yes |
+| Webhook callback | (merchant endpoint) | `VerifyWebhook`, `VerifyWebhookSignature`, `ParseWebhook`, `WriteAck` | yes |
 
 Every endpoint in the original Postman snapshot is implemented. This is not
 a claim of full coverage of newer developer portal endpoints.
@@ -142,10 +188,26 @@ own responses and sending an empty string is not the same as sending nothing.
 
 ## Parsing validation
 
-- Webhook identity and outcome fields are required: nonempty string
-  `merchantId` matching the client, nonempty string `id`, `purpose` equal to
-  `charge` or `token`, and boolean `success`. A successful token callback must
-  carry a nonempty string `token`. Parsing still does not authenticate it.
+- Webhook `purpose` must be a nonempty string. A present `merchantId` must
+  match the client. Per purpose, the fields Oen marks 一定有 are required:
+
+  | Purpose | Required |
+  | --- | --- |
+  | `charge` | `merchantId`, `id` |
+  | `token` | `merchantId`, `id`, `success` |
+  | `schedule_subscription` | `merchantId`, `id`, `success`, `subscriptionId` |
+  | `subscription_card_changed` | `merchantId`, `id`, `success`, `status`, `subscriptionId` |
+  | `invoice_issued`, `invoice_voided` | `merchantId`, `id`, `chargeId`, `invoiceNumber`, `invoiceStatus` |
+  | `refund`, `subscription_cancelled`, `subscription_retry` | `id` |
+  | unknown | nothing beyond `purpose` |
+
+  `success` must be a boolean when present; it is absent on a `charge` still
+  in progress. A successful token callback must carry a nonempty string
+  `token`. A present `merchantId` must be a string; `id` and `status`, when
+  present, must be strings or booleans, because they are part of the event
+  ID. Charge `status` is not
+  required although Oen marks it 一定有; earlier versions did not require it. Parsing still does not authenticate
+  it; `VerifyWebhook` does.
 - Transaction and subscription query `amount` is required. Cancellation may
   omit it and sets `Subscription.HasAmount=false`; a webhook may omit it and
   sets `WebhookEvent.HasAmount=false`. Supplied monetary fields must parse as
@@ -185,7 +247,6 @@ own responses and sending an empty string is not the same as sending nothing.
 
 | Capability | Status |
 | --- | --- |
-| Webhook signature verification | The Payment API publishes no signature (the Subscription API does; see below). `WebhookEvent.Verified` is always false. |
 | Card-binding lookup | Oen has no endpoint that returns a binding by its `/checkout-token` session or `customId` (confirmed with Oen on 2026-09-05; they were building one). Confirm before assuming it exists. |
 | 3D `/setup3d`, `/check3d` | Not implemented; excluded from provider idempotency protection. |
 | Currencies other than TWD | Oen documents `TWD` only; the SDK refuses anything else locally. |
@@ -203,6 +264,17 @@ These provider behaviors remain unverified:
   of 100, so the page size is not something to depend on.
 - `start` and `end` on the transaction list: named in the URL, never described.
 - Whether Oen ever answers HTTP 429. The rate-limit handling is defensive.
+- Webhook signatures and event IDs. The tests use Oen's documented algorithm
+  and its sample notification, with the event ID computed by `openssl` and
+  Node.js, but no real signed delivery has been received. That includes
+  whether `OenPay-Event-Id` on refund, subscription and invoice events follows
+  the same formula; Oen's sample receivers check it for every purpose, and so
+  does `VerifyWebhook`.
+- The refund, `subscription_cancelled` and `subscription_retry` field tables
+  are abbreviated: they omit `merchantId`, `id` and value types. The SDK
+  requires `id` (Oen states it is the event key for these purposes), checks
+  `merchantId` only when present, and assumes `retryAttemptNumber` is an
+  integer and `origAmount` a whole amount. No example body is published.
 - Timestamps without a UTC offset. Oen documents every date field as ISO in
   UTC+0, and every example carries `Z`. `Config.NaiveTimeLocation` decides how
   an offset-less value is read, and defaults to UTC.

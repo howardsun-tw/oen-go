@@ -2,7 +2,11 @@ package compat_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -113,5 +117,36 @@ func TestTimeoutAndRateLimitFromConsumer(t *testing.T) {
 				t.Fatalf("expected one attempt, got %d", got)
 			}
 		})
+	}
+}
+
+func TestPaymentWebhookFromConsumer(t *testing.T) {
+	const secret = "pay_whsec_consumer"
+	body := []byte(`{"merchantId":"oentech","purpose":"charge","id":"tx_1","status":"charged","success":true,"amount":1000}`)
+	now := time.Unix(1790000000, 0)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = fmt.Fprintf(mac, "%d.%s", now.Unix(), body)
+	header := http.Header{}
+	header.Set(oen.HeaderSignature, fmt.Sprintf("t=%d,v1=%s", now.Unix(), hex.EncodeToString(mac.Sum(nil))))
+
+	client, err := oen.New(oen.Config{
+		Environment:   oen.Testing,
+		MerchantID:    "oentech",
+		AuthToken:     "auth-token",
+		WebhookSecret: secret,
+		Now:           func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := client.VerifyWebhook(body, header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !event.Verified || !event.ChargeSucceeded() {
+		t.Fatalf("unexpected event %+v", event)
+	}
+	if _, err := client.VerifyWebhook(append(body, ' '), header); !errors.Is(err, oen.ErrInvalidSignature) {
+		t.Fatalf("tampered body was accepted: %v", err)
 	}
 }

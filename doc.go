@@ -38,9 +38,11 @@
 // sanitized: PANs are reduced to their last four digits and provider secrets
 // are replaced with "REDACTED". See [SanitizeJSON].
 //
-// Webhook payloads are parsed, not authenticated. The Payment API publishes no
-// webhook signature, so [Client.ParseWebhook] always reports Verified as false and a
-// parsed event is never on its own proof that money moved.
+// Webhook payloads are signed once the merchant generates a signing secret in
+// the Oen CRM. [Client.VerifyWebhook] checks the OenPay-Signature header and
+// reports Verified as true; [Client.ParseWebhook] performs no authentication
+// and reports Verified as false. A verified event can still be a duplicate or
+// out of date, so confirm it with a query before money-related state changes.
 //
 // Oen's separate Subscription API is in package
 // github.com/howardsun-tw/oen-go/subscription.

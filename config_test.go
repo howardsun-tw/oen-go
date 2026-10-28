@@ -111,6 +111,8 @@ func TestConfigValidatesEveryRequiredSetting(t *testing.T) {
 		{name: "relative base URL", mutate: func(c *Config) { c.BaseURL = "payment-api.oen.tw" }, field: "baseURL"},
 		{name: "non http scheme", mutate: func(c *Config) { c.BaseURL = "ftp://payment-api.oen.tw" }, field: "baseURL"},
 		{name: "bad checkout URL", mutate: func(c *Config) { c.CheckoutBaseURL = "nope" }, field: "checkoutBaseURL"},
+		{name: "subscription webhook secret", mutate: func(c *Config) { c.WebhookSecret = "sub_whsec_x" }, field: "webhookSecret"},
+		{name: "negative webhook tolerance", mutate: func(c *Config) { c.WebhookTolerance = -time.Second }, field: "webhookTolerance"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -67,6 +67,11 @@ const (
 
 	// KindInvalidInput is a local validation failure. No request was sent.
 	KindInvalidInput Kind = "invalid_input"
+
+	// KindInvalidSignature means a webhook did not carry a valid
+	// OenPay-Signature for its body. Answer with a 4xx status and do not act
+	// on the body.
+	KindInvalidSignature Kind = "invalid_signature"
 )
 
 // Sentinels for errors.Is. They carry no provider detail; use errors.As with
@@ -79,6 +84,7 @@ var (
 	ErrRateLimited      = errors.New("oen: provider rate limited the request")
 	ErrUnknownOutcome   = errors.New("oen: provider outcome is unknown")
 	ErrInvalidInput     = errors.New("oen: request is not valid")
+	ErrInvalidSignature = errors.New("oen: webhook signature is not valid")
 
 	// ErrProductAmountMismatch means the line items do not add up to the
 	// amount. Oen refuses that combination, so the SDK refuses it locally
@@ -157,6 +163,8 @@ func (e *Error) Is(target error) bool {
 		return e.Kind == KindUnknownOutcome
 	case ErrInvalidInput:
 		return e.Kind == KindInvalidInput
+	case ErrInvalidSignature:
+		return e.Kind == KindInvalidSignature
 	default:
 		return false
 	}

@@ -66,7 +66,18 @@ type Config struct {
 	// Oen documents every date as ISO in UTC+0, so it defaults to time.UTC.
 	NaiveTimeLocation *time.Location
 
-	// Now supplies the clock used for Retry-After deadlines and call duration.
+	// WebhookSecret is the payment notification signing secret (pay_whsec_…)
+	// generated in the Oen CRM under 總設定 → 開發者 → 應援金流設定. It is
+	// optional; [Client.VerifyWebhook] requires it. Oen rotates it without an
+	// overlap: the old secret stops verifying with the next notification.
+	WebhookSecret string
+
+	// WebhookTolerance is the largest accepted difference between a webhook
+	// signature timestamp and Now. It defaults to [DefaultWebhookTolerance].
+	WebhookTolerance time.Duration
+
+	// Now supplies the clock used for Retry-After deadlines, call duration
+	// and webhook signature timestamps.
 	Now func() time.Time
 
 	// Logf receives one line per request: method, path, HTTP status, outcome
@@ -83,6 +94,7 @@ func (cfg Config) normalized() (Config, error) {
 	cfg.AuthToken = strings.TrimSpace(cfg.AuthToken)
 	cfg.DefaultSuccessURL = strings.TrimSpace(cfg.DefaultSuccessURL)
 	cfg.DefaultFailureURL = strings.TrimSpace(cfg.DefaultFailureURL)
+	cfg.WebhookSecret = strings.TrimSpace(cfg.WebhookSecret)
 
 	if cfg.MerchantID == "" {
 		return Config{}, newValidationError(op, "merchantId", "merchant ID is required")
@@ -146,6 +158,17 @@ func (cfg Config) normalized() (Config, error) {
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultTimeout
+	}
+	// A Subscription API secret (sub_whsec_) or a typo would make every
+	// notification fail verification; refuse it at construction instead.
+	if cfg.WebhookSecret != "" && !strings.HasPrefix(cfg.WebhookSecret, webhookSecretPrefix) {
+		return Config{}, newValidationError(op, "webhookSecret", "webhook secret must start with "+webhookSecretPrefix)
+	}
+	if cfg.WebhookTolerance < 0 {
+		return Config{}, newValidationError(op, "webhookTolerance", "webhook tolerance must not be negative")
+	}
+	if cfg.WebhookTolerance == 0 {
+		cfg.WebhookTolerance = DefaultWebhookTolerance
 	}
 	if cfg.NaiveTimeLocation == nil {
 		cfg.NaiveTimeLocation = time.UTC

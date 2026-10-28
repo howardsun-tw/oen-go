@@ -148,8 +148,12 @@ func paymentContextOf(object map[string]any) paymentContext {
 		text = strings.TrimSpace(text)
 		switch normalizeKey(key) {
 		case "purpose":
-			if strings.EqualFold(text, string(PurposeToken)) {
-				return paymentContextCard
+			// These purposes carry card data only: the last four digits
+			// of the bound or new card.
+			for _, purpose := range []WebhookPurpose{PurposeToken, PurposeScheduleSubscription, PurposeSubscriptionCardChanged} {
+				if strings.EqualFold(text, string(purpose)) {
+					return paymentContextCard
+				}
 			}
 		case "paymentmethod", "method":
 			if strings.EqualFold(text, string(MethodCard)) {
