@@ -55,8 +55,8 @@ The Postman collection (published 2026-07-15) does not describe signatures.
   its last four characters. Inside a `paymentInfo` object of a card payment,
   a card number printed in groups (`4242 4242 4242 4242` or with hyphens) is
   also reduced to its last four digits. Where the payload names no method,
-  only an ungrouped Luhn-valid number is masked, and not inside an object
-  that names a non-card method, so an ATM `account` stays whole.
+  only an ungrouped Luhn-valid number is masked, so a grouped ATM `account`
+  stays whole. A nested method name never lifts that masking.
 
 ## Payment API idempotency update (2026-10-20)
 

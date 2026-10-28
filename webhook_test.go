@@ -534,18 +534,21 @@ func TestCardPurposesNeverReturnAFullCardNumber(t *testing.T) {
 }
 
 // A bank account can pass the card number check. Where the payload does not
-// say it is a card payment, a grouped account, or any account under a
-// non-card method, must stay whole.
-func TestNonCardPaymentInfoKeepsAccountNumbers(t *testing.T) {
+// say it is a card payment, a grouped account must stay whole; an ungrouped
+// Luhn-valid number is still masked, whatever a nested method claims.
+func TestNonCardPaymentInfoKeepsGroupedAccounts(t *testing.T) {
 	client := newSigningClient(t, "ming")
-	for account, paymentInfo := range map[string]string{
-		"1234-5678-9012-3452": `{"bankCode":"812","account":"1234-5678-9012-3452"}`,
-		"1234567890123452":    `{"method":"atm","bankCode":"812","account":"1234567890123452"}`,
-	} {
-		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","paymentInfo":` + paymentInfo + `}`))
+	event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx",` +
+		`"paymentInfo":{"bankCode":"812","account":"1234-5678-9012-3452"}}`))
+	noError(t, err)
+	equal(t, "1234-5678-9012-3452", event.PaymentInfo.Account)
+	contains(t, string(event.RedactedPayload), "1234-5678-9012-3452")
+
+	for _, method := range []string{"atm", "credit"} {
+		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx",` +
+			`"paymentInfo":{"method":"` + method + `","number":"4242424242424242"}}`))
 		noError(t, err)
-		equal(t, account, event.PaymentInfo.Account)
-		contains(t, string(event.RedactedPayload), account)
+		notContains(t, string(event.RedactedPayload), "4242424242424242")
 	}
 }
 

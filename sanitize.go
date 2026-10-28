@@ -75,8 +75,8 @@ type panMask int
 const (
 	panMaskOff panMask = iota
 	// panMaskUnknown is a payment method the payload does not name: an
-	// ungrouped Luhn-valid digit string is masked, unless a nested object
-	// names a non-card method.
+	// ungrouped Luhn-valid digit string is masked. A nested method name does
+	// not lift it, since any value that is not "card" would fail open.
 	panMaskUnknown
 	// panMaskCard is a card payment or token binding: a card number printed
 	// in groups is masked too.
@@ -101,9 +101,6 @@ func sanitizeNode(key string, value any, mask panMask) any {
 	case map[string]any:
 		clean := make(map[string]any, len(value))
 		context := paymentContextOf(value)
-		if mask == panMaskUnknown && context == paymentContextOther {
-			mask = panMaskOff // For example an ATM account inside paymentInfo.
-		}
 		for childKey, childValue := range value {
 			childMask := mask
 			// Oen also places card data in a scalar paymentInfo field. Its
