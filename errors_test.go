@@ -13,8 +13,7 @@ func envelopeFor(code, message string) *envelope {
 	return &envelope{Code: rawJSON(code), Message: rawJSON(message)}
 }
 
-// The official code table (S0000, A0001, V0001, V0002, T0001..T0005, F0001)
-// decides what the caller may do next, so every code has to land in exactly
+// The official code table decides what the caller may do next, so every code has to land in exactly
 // one kind. F0001 is a provider-side system error: the request may still have
 // applied, so it must never look like a clean refusal.
 func TestClassifyMapsOfficialCodes(t *testing.T) {
@@ -33,6 +32,11 @@ func TestClassifyMapsOfficialCodes(t *testing.T) {
 		{code: CodeCardExpired, kind: KindDeclined, reason: ReasonCardExpired, declined: true},
 		{code: CodeInsufficientFunds, kind: KindDeclined, reason: ReasonInsufficientFunds, declined: true},
 		{code: CodeCardDeclined, kind: KindDeclined, reason: ReasonCardDeclined, declined: true},
+		{code: CodeTooManyDeclines, kind: KindDeclined, reason: ReasonUnknown, declined: true},
+		// K0001 is a risk-control refusal that Oen documents as not retryable.
+		{code: CodeRiskRejected, kind: KindDeclined, reason: ReasonUnknown, declined: true},
+		// R0001: Oen asks the merchant to query the transaction first.
+		{code: CodeRefundFailed, kind: KindUnknownOutcome, unknown: true},
 		{code: CodeIdempotencyConflict, kind: KindInvalidRequest},
 		{code: CodeIdempotencyInProgress, kind: KindUnknownOutcome, unknown: true},
 		{code: CodeIdempotencyUnknownOutcome, kind: KindUnknownOutcome, unknown: true},

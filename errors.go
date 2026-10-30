@@ -10,9 +10,11 @@ import (
 	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
-// Response codes from Oen's official code table. Any other code is treated by
-// its first letter, and an unrecognised letter is treated as an unknown
-// outcome rather than as a refusal.
+// Response codes from Oen's official error table
+// (https://developer.oen.tw/api/error-codes/, checked 2026-10-30). Any other
+// code is treated by its first letter, and an unrecognised letter is treated
+// as an unknown outcome rather than as a refusal. [LookupCode] describes each
+// one.
 const (
 	CodeIdempotencyConflict       = "I0001" // same key with a different request
 	CodeIdempotencyInProgress     = "I0002" // retry the same request and key later
@@ -20,13 +22,23 @@ const (
 	CodePaymentUnknownOutcome     = "C026"  // query; do not charge with a new key
 	CodeSuccess                   = "S0000" // success (執行成功)
 	CodeUnauthorized              = "A0001" // unauthorized (未授權)
+	CodeTokenExpired              = "A0002" // token expired (token 已過期)
 	CodeInvalidRequest            = "V0001" // invalid request (請求錯誤)
 	CodeInvalidTransactionState   = "V0002" // invalid transaction state (交易狀態錯誤)
+	CodeAmountOverLimit           = "V0003" // amount over the single-payment limit
+	CodeMissingPaymentMethods     = "V0004" // strict payment methods without a list
+	CodePaymentMethodInactive     = "V0005" // a listed payment method is not activated
+	CodeNoPaymentMethodForAmount  = "V0006" // no listed payment method accepts the amount
+	CodeCurrencyNotSupported      = "V0007" // strict payment methods need TWD
 	CodeTransactionFailed         = "T0001" // transaction failed (交易失敗)
 	CodeInvalidCVV                = "T0002" // invalid CVV (安全碼 CVV 錯誤)
 	CodeCardExpired               = "T0003" // card expired (卡片過期)
 	CodeInsufficientFunds         = "T0004" // insufficient funds (額度不足)
 	CodeCardDeclined              = "T0005" // authorization declined (拒絕授權)
+	CodeNon3DChargeUnavailable    = "T0009" // domain cannot charge without 3-D Secure
+	CodeTooManyDeclines           = "T0010" // token declined too often; nothing was sent
+	CodeRefundFailed              = "R0001" // refund failed; query before acting
+	CodeRiskRejected              = "K0001" // risk control refused the payment
 	CodeSystemError               = "F0001" // system error (系統錯誤)
 )
 
@@ -346,6 +358,10 @@ func providerError(op string, status int, code, message string) *Error {
 		kind = KindUnknownOutcome
 	case normalized == CodeInvalidTransactionState:
 		kind = KindTransactionState
+	case normalized == CodeRiskRejected:
+		// A risk-control refusal is definitive: Oen documents it as not
+		// retryable and asks the merchant to contact them.
+		kind = KindDeclined
 	case strings.HasPrefix(normalized, "T"):
 		kind = KindDeclined
 	case strings.HasPrefix(normalized, "V"):

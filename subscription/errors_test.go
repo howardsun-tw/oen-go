@@ -22,6 +22,9 @@ func TestProviderErrorsAreClassifiedByStatusAndErrno(t *testing.T) {
 		{400, ErrnoRecoveryLinkState, KindConflict, ErrConflict, false},
 		{401, ErrnoInvalidKey, KindUnauthorized, ErrUnauthorized, false},
 		{403, ErrnoMissingScope, KindForbidden, ErrForbidden, false},
+		{403, ErrnoDomainDisabled, KindForbidden, ErrForbidden, false},
+		// M012 is a 422, but it refuses the merchant, not the request.
+		{422, ErrnoPaymentSuspended, KindForbidden, ErrForbidden, false},
 		{404, ErrnoSubscriptionNotFound, KindNotFound, ErrNotFound, false},
 		{409, ErrnoCannotCancel, KindConflict, ErrConflict, false},
 		{409, ErrnoIdempotencyKeyMismatch, KindConflict, ErrConflict, false},

@@ -10,7 +10,9 @@ import (
 	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
-// Error numbers (errno) from Oen's Subscription API error table.
+// Error numbers (errno) from Oen's Subscription API error table
+// (https://developer.oen.tw/products/subscription-api/, checked 2026-10-30).
+// [LookupErrno] describes each one.
 const (
 	// Common errors.
 	ErrnoValidation           = "X006"  // 400 field validation failed
@@ -21,6 +23,8 @@ const (
 	ErrnoMissingScope         = "X023"  // 403 key lacks the required scope
 	ErrnoRouteNotFound        = "X011"  // 404 path does not exist
 	ErrnoSubscriptionNotFound = "SA001" // 404
+	ErrnoDomainDisabled       = "M002"  // 403 domain disabled; valid keys are refused
+	ErrnoPaymentSuspended     = "M012"  // 422 payment service suspended; valid keys are refused
 
 	// Subscriptions and plans.
 	ErrnoCannotCancel           = "SA002" // 409
@@ -79,7 +83,8 @@ const (
 	KindUnauthorized Kind = "unauthorized"
 
 	// KindForbidden means the key lacks the scope the operation needs
-	// (HTTP 403).
+	// (HTTP 403), or the merchant's domain is disabled or its payment
+	// service suspended (M002, M012). Changing the request does not help.
 	KindForbidden Kind = "forbidden"
 
 	// KindNotFound means the target does not exist or does not belong to the
@@ -313,6 +318,9 @@ func classify(op, method string, status int, headers http.Header, body *errorBod
 	switch {
 	case failure.Errno == ErrnoRecoveryLinkState:
 		failure.Kind = KindConflict
+	case failure.Errno == ErrnoPaymentSuspended:
+		// M012 is a 422, but it refuses the merchant, not the request.
+		failure.Kind = KindForbidden
 	case status == http.StatusUnauthorized:
 		failure.Kind = KindUnauthorized
 	case status == http.StatusForbidden:

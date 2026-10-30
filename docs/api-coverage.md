@@ -2,6 +2,37 @@
 
 What this SDK implements, measured against Oen's own documentation.
 
+## Error code catalog update (2026-10-30)
+
+Verified against [the Payment API error table](https://developer.oen.tw/api/error-codes/)
+and the error table of [the Subscription API](https://developer.oen.tw/products/subscription-api/),
+retrieved through [the official text export](https://developer.oen.tw/llms-full.txt).
+The [Postman reference](https://documenter.getpostman.com/view/26859697/2s9YsQ7VJA#response-structure)
+lists only ten of the Payment API codes; the developer site is newer and
+is the source used here.
+
+- `oen.LookupCode` and `(*oen.Error).Description()` describe every
+  non-success Payment API code that the SDK's endpoints can return: documented HTTP status, SDK `Kind`, Oen's
+  meaning in Traditional Chinese, an English description and the SDK's
+  recommended action. The action follows the README where the SDK is
+  stricter than Oen (`C026`: query first, even with the same key).
+- `subscription.LookupErrno` and `(*subscription.Error).Description()` do
+  the same for every Subscription API errno, without an action: Oen's table
+  has none.
+- New constants: `A0002`, `V0003` to `V0007`, `T0009`, `T0010`, `R0001`,
+  `K0001` (Payment API); `M002`, `M012` (Subscription API).
+- `K0001` (risk-control refusal) is now `KindDeclined`. It was
+  `KindUnknownOutcome` because no rule covered the `K` letter. Oen documents
+  it as not retryable.
+- `M012` (payment service suspended, HTTP 422) is now `KindForbidden`
+  instead of `KindInvalidRequest`: it refuses the merchant, not the request.
+- Not in the catalog: the card-update page codes `C0000` to `C0013`, because
+  no SDK method calls that endpoint, and the `payment_error` redirect
+  parameter, whose `V0003` means "result pending" instead of "amount over
+  limit".
+- Tests check that each catalog entry's `Kind` is what `classify` returns at
+  the documented status.
+
 ## Payment API webhook signature update (2026-10-28)
 
 Verified against [the webhook guide](https://developer.oen.tw/developers/webhooks/#確認通知的真假),
@@ -182,13 +213,19 @@ own responses and sending an empty string is not the same as sending nothing.
 | --- | --- | --- | --- |
 | `S0000` | 執行成功 | — | — |
 | `A0001` | 未授權 | `KindUnauthorized` | Not until the credentials change |
+| `A0002` | token 已過期 | `KindUnauthorized` | Not until the token is regenerated |
 | `V0001` | 請求錯誤 | `KindInvalidRequest` | Not until the request changes |
 | `V0002` | 交易狀態錯誤 | `KindTransactionState` | Not until the target's state changes |
+| `V0003` to `V0007` | 金額上限、指定付款方式 | `KindInvalidRequest` | Not until the request changes |
 | `T0001` | 交易失敗 | `KindDeclined` | No |
 | `T0002` | 安全碼 CVV 錯誤 | `KindDeclined` | No |
 | `T0003` | 卡片過期 | `KindDeclined` | No |
 | `T0004` | 額度不足 | `KindDeclined` | No |
 | `T0005` | 拒絕授權 | `KindDeclined` | No |
+| `T0009` | 不能免 3D 扣款 | `KindDeclined` | No; contact Oen |
+| `T0010` | token 被拒絕太多次 | `KindDeclined` | No; not with this token |
+| `K0001` | 風控拒絕 | `KindDeclined` | No; contact Oen |
+| `R0001` | 退款失敗 | `KindUnknownOutcome` | Only after querying |
 | `F0001` | 系統錯誤 | `KindUnknownOutcome` | Only after querying |
 | Undocumented `T*`/`V*`/`A*` | — | By first letter | As for the letter |
 | Any other undocumented code | — | `KindUnknownOutcome` | Only after querying |
@@ -403,6 +440,7 @@ Character limits count Unicode characters, not bytes.
 | Errno | HTTP | Kind | Why |
 | --- | --- | --- | --- |
 | `X016` | 400 | `KindConflict` | Reports the subscription's state, not a malformed request |
+| `M012` | 422 | `KindForbidden` | The merchant's payment service is suspended; the request is not at fault |
 | `SA015` | 409 | `KindInProgress` | Charge pending or undetermined; Oen says query, do not resend |
 | `SA025` | 409 | `KindInProgress` | Refund still processing |
 | `SA027` | 502 | `KindDeclined` | Processor refused the refund; confirm, then use a new key |

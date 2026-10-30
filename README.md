@@ -376,7 +376,9 @@ What differs from the Payment API:
 - **Errors** are `*subscription.Error` with Oen's `Errno` (`SA002`, `X023`, …).
   `Kind` follows the HTTP status, except where Oen's meaning differs: `SA015`
   and `SA025` are `KindInProgress` (query, do not resend), `SA027` is
-  `KindDeclined`, and `X016` is `KindConflict`.
+  `KindDeclined`, `X016` is `KindConflict`, and `M012` is `KindForbidden`.
+  `(*Error).Description()` and `subscription.LookupErrno(errno)` explain each
+  errno.
 - **Webhooks are signed.** `WebhookVerifier{Secret: "sub_whsec_…"}.Verify(body,
   r.Header)` checks `OenPay-Signature` against the raw body, accepts either
   signature during a secret rotation, and rejects timestamps more than 5
@@ -399,9 +401,9 @@ message, the HTTP status and a `Kind`.
 
 | Helper | Kind | What it means |
 | --- | --- | --- |
-| `IsDeclined` | `KindDeclined` | Settled refusal (`T0001`–`T0005`). Nothing moved. |
+| `IsDeclined` | `KindDeclined` | Settled refusal (`T0001`–`T0005`, `T0009`, `T0010`, `K0001`). Nothing moved. |
 | `IsInvalidRequest` | `KindInvalidRequest` | `V0001` (or another V code except `V0002`), or `I0001`. For `I0001`, reconcile the original operation; it may already have applied. For provider `V0001`, a corrected body needs a new key because the error may be saved. |
-| `IsUnauthorized` | `KindUnauthorized` | `A0001` (or another A code). |
+| `IsUnauthorized` | `KindUnauthorized` | `A0001`, `A0002` (token expired), or another A code. |
 | — | `KindTransactionState` | `V0002`: the target is not in a state that allows this. |
 | `IsRateLimited` | `KindRateLimited` | HTTP 429. Wait `RetryAfter(err)`. |
 | `IsUnknownOutcome` | `KindUnknownOutcome`, and also POST/PUT 429 | Query before doing anything else. A rate-limited write keeps `KindRateLimited` and still matches this helper. |
@@ -409,6 +411,25 @@ message, the HTTP status and a `Kind`.
 
 `(*Error).DeclineReason()` maps a decline onto `insufficient_funds`,
 `card_expired`, `card_declined`, `invalid_cvv` or `transaction_failed`.
+
+`(*Error).Description()` explains the code in English. `oen.LookupCode(code)`
+also returns the documented HTTP status, the `Kind`, Oen's own meaning in
+Traditional Chinese and the recommended action:
+
+```go
+var oenErr *oen.Error
+if errors.As(err, &oenErr) {
+    if info, ok := oen.LookupCode(oenErr.Code); ok {
+        log.Printf("%s %s: %s (%s). Next: %s",
+            oenErr.Op, info.Code, info.Description, info.OfficialDescription, info.Action)
+    }
+}
+```
+
+`LookupCode` covers the `code` field of API responses only. It does not
+describe the `payment_error` parameter on a checkout `failureUrl`, where
+`V0003` means "result pending". `K0001` (risk control) is a decline; `R0001`
+(refund failed) is an unknown outcome, so query the transaction first.
 
 HTTP 400 or 401 without a usable provider code is `KindUnknownOutcome`.
 Response decoding failures retain the HTTP status and any decoded provider code.

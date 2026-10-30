@@ -138,3 +138,19 @@ func ExampleIsDeclined() {
 	// code: T0004
 	// must query before retrying: false
 }
+
+// ExampleLookupCode explains a provider code for a log line or an alert.
+func ExampleLookupCode() {
+	info, ok := oen.LookupCode("T0010")
+	if !ok {
+		return
+	}
+	fmt.Println(info.Kind, info.HTTPStatus)
+	fmt.Println(info.OfficialDescription)
+	fmt.Println(info.Action)
+
+	// Output:
+	// declined 400
+	// 同一個 token 短時間內被明確拒絕太多次，這次沒有送出扣款
+	// Stop retrying with this token. Ask the customer to check the card or to bind it again; the token recovers after a while.
+}
