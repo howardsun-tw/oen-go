@@ -144,8 +144,8 @@ the SDK hands back has been through `SanitizeJSON`: PANs under card-number
 keys are reduced to their last four digits, and tokens, CVVs and Oen's `sk`
 field are replaced with `REDACTED`. `Config.Logf` receives one line per
 request — method, path, status, outcome, duration — and never a credential.
-Scalar `paymentInfo` is reduced to four characters for card payments and
-token callbacks, and for any payload that names no payment method when the
+Scalar `paymentInfo` is reduced to four characters for card and Apple Pay
+payments and token callbacks, and for any payload that names no payment method when the
 value looks like a card number (13–19 digits passing Luhn); a payload that
 names LINE Pay or another non-card method keeps its reference intact.
 Free-text fields — `Error.Message`, `WebhookEvent.Message`,
@@ -302,6 +302,12 @@ request Oen will reject.
 | `CreateSubscriptionCheckout` | recurring payment, charged monthly by Oen |
 | `CreateScheduleCheckout` | recurring payment with a start date and interval |
 | `CreateTokenCheckout` | card binding, returns a token by webhook |
+
+`CreateCheckout` always offers card payment, and Oen adds Apple Pay on
+supported devices without being asked; `AllowedPaymentMethods` adds CVS, ATM
+or LINE Pay. `MethodApplePay` appears only on transactions and webhooks, and
+an Apple Pay webhook may carry no `paymentInfo`. Subscription and card-binding
+pages accept cards only.
 
 Each returns a `CheckoutSession` whose `RedirectURL` is where the payer goes.
 

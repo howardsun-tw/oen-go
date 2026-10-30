@@ -275,3 +275,18 @@ func hasTime(t *testing.T, value *time.Time) {
 		t.Fatalf("want a timestamp, got %v", value)
 	}
 }
+
+// Apple Pay settles on a card, so its paymentInfo looks like card data; the
+// documented paymentMethod must still name it, and a webhook may omit it.
+func TestApplePayKeepsItsMethod(t *testing.T) {
+	transaction, err := decodeTransaction(json.RawMessage(`{"id":"P1","amount":1000,"paymentMethod":"applePay","paymentInfo":{"cardNum":"4242424242424242","cardType":"Visa"}}`), time.UTC)
+	noError(t, err)
+	equal(t, MethodApplePay, transaction.PaymentInfo.Method)
+	equal(t, "4242", transaction.PaymentInfo.CardLast4)
+
+	_, client := newFake(t)
+	event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,"status":"charged","paymentMethod":"applePay"}`))
+	noError(t, err)
+	equal(t, MethodApplePay, event.PaymentMethod)
+	equal(t, "", event.PaymentInfo.CardLast4)
+}

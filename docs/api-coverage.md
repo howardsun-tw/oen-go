@@ -266,7 +266,7 @@ own responses and sending an empty string is not the same as sending nothing.
   and on webhooks; absent or null timestamps are the zero time. A bare epoch
   is read only when it arrives as a JSON number, never from a digit string.
 - Scalar `paymentInfo` is redacted before building returned DTOs when the
-  payload names a card payment or token binding, or names no payment method
+  payload names a card or Apple Pay payment or a token binding, or names no payment method
   and the value looks like a card number (13–19 digits passing Luhn); LINE
   Pay and other explicitly non-card references remain intact. Inside a
   `paymentInfo` object or array in those contexts, any scalar that looks like

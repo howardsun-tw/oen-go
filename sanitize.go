@@ -148,7 +148,7 @@ type paymentContext int
 const (
 	// paymentContextUnknown means the payload names no payment method.
 	paymentContextUnknown paymentContext = iota
-	// paymentContextCard is a card payment or a token binding.
+	// paymentContextCard is a card or Apple Pay payment, or a token binding.
 	paymentContextCard
 	// paymentContextOther is a non-card method such as LINE Pay, whose
 	// paymentInfo is a reference rather than a card number.
@@ -173,7 +173,8 @@ func paymentContextOf(object map[string]any) paymentContext {
 				}
 			}
 		case "paymentmethod", "method":
-			if strings.EqualFold(text, string(MethodCard)) {
+			// Apple Pay settles on a card, so its paymentInfo is card data.
+			if strings.EqualFold(text, string(MethodCard)) || strings.EqualFold(text, string(MethodApplePay)) {
 				return paymentContextCard
 			}
 			if text != "" {

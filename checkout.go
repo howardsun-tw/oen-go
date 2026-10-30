@@ -23,7 +23,8 @@ type CheckoutRequest struct {
 	SuccessURL string
 	FailureURL string
 
-	// AllowedPaymentMethods widens the hosted page beyond card payment.
+	// AllowedPaymentMethods widens the hosted page beyond card payment. Card
+	// payment, and Apple Pay on supported devices, always appear.
 	AllowedPaymentMethods []PaymentMethod
 	// Use3D asks for 3-D Secure. Oen defaults it to false.
 	Use3D bool

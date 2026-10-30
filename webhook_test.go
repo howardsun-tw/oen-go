@@ -223,7 +223,7 @@ func TestWebhookRejectsInvalidAmounts(t *testing.T) {
 func TestScalarPaymentInfoRedactsCardsButPreservesLinePay(t *testing.T) {
 	_, client := newFake(t)
 	for _, test := range []struct{ purpose, method, want string }{
-		{"charge", "card", "4242"}, {"token", "", "4242"}, {"charge", "linePay", "4242424242424242"},
+		{"charge", "card", "4242"}, {"charge", "applePay", "4242"}, {"token", "", "4242"}, {"charge", "linePay", "4242424242424242"},
 	} {
 		t.Run(test.purpose+test.method, func(t *testing.T) {
 			raw := []byte(`{"merchantId":"oentech","id":"P1","purpose":"` + test.purpose + `","success":true,"token":"secret","paymentMethod":"` + test.method + `","paymentInfo":"4242424242424242"}`)

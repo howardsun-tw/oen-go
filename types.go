@@ -28,6 +28,10 @@ const (
 	MethodATM     PaymentMethod = "atm"
 	MethodCVS     PaymentMethod = "cvs"
 	MethodLinePay PaymentMethod = "linePay"
+	// MethodApplePay only appears on transactions and webhooks. Oen shows
+	// Apple Pay on the hosted page whenever card payment is on, so it is not
+	// a value for [CheckoutRequest.AllowedPaymentMethods].
+	MethodApplePay PaymentMethod = "applePay"
 )
 
 // Action tells a one-off transaction apart from one instalment of a
@@ -336,8 +340,10 @@ func decodeTransaction(resource json.RawMessage, loc *time.Location) (Transactio
 	if err != nil {
 		return Transaction{}, fmt.Errorf("transaction paymentInfo: %w", err)
 	}
-	if info.Method == "" {
-		info.Method = PaymentMethod(rawString(wire.PaymentMethod))
+	// The documented paymentMethod outranks the guess decodePaymentInfo makes
+	// from card fields, which cannot tell Apple Pay from a card.
+	if method := rawString(wire.PaymentMethod); method != "" {
+		info.Method = PaymentMethod(method)
 	}
 	period, err := parseOptionalInt(wire.Period)
 	if err != nil {
