@@ -128,18 +128,36 @@ func sanitizeNode(key string, value any, mask panMask) any {
 		}
 		return clean
 	case string:
-		if mask != panMaskOff && looksLikeCardNumber(value, mask == panMaskCard) {
+		if masksScalar(key, mask) && looksLikeCardNumber(value, mask == panMaskCard) {
 			return lastFour(value)
 		}
 		return value
 	case json.Number:
-		if mask != panMaskOff && looksLikeCardNumber(value.String(), false) {
+		if masksScalar(key, mask) && looksLikeCardNumber(value.String(), false) {
 			return lastFour(value.String())
 		}
 		return value
 	default:
 		return value
 	}
+}
+
+// masksScalar reports whether a scalar under key is checked for a card
+// number. Where the payload names no method, the keys Oen documents for
+// non-card payment references are exempt: an ATM virtual account or a CVS
+// payment code can pass the Luhn check, and the payer needs it whole. Any
+// other key, including an undocumented one beside them, is still checked.
+func masksScalar(key string, mask panMask) bool {
+	switch mask {
+	case panMaskOff:
+		return false
+	case panMaskUnknown:
+		switch normalizeKey(key) {
+		case "account", "bankcode", "code", "cvscode":
+			return false
+		}
+	}
+	return true
 }
 
 // paymentContext is what a payload says about its own payment method.

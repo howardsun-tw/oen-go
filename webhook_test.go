@@ -552,6 +552,30 @@ func TestNonCardPaymentInfoKeepsGroupedAccounts(t *testing.T) {
 	}
 }
 
+// Oen's webhook table says paymentMethod may be absent and documents the ATM
+// paymentInfo as { bankName, bankCode, account, expiredAt } and the CVS one as
+// { cvsName, code, expiredAt }, with no nested method. An ungrouped virtual
+// account or payment code that happens to pass the Luhn check is what the
+// payer needs, so it must stay whole.
+func TestNonCardPaymentInfoKeepsDocumentedPaymentReferences(t *testing.T) {
+	const account = "81200001234564" // Luhn-valid
+	const code = "71100000000002"    // Luhn-valid
+	client := newSigningClient(t, "ming")
+
+	event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","status":"charging",` +
+		`"paymentInfo":{"bankName":"Bank","bankCode":"812","account":"` + account + `","expiredAt":"2026-09-30T02:00:00.000Z"}}`))
+	noError(t, err)
+	equal(t, account, event.PaymentInfo.Account)
+	equal(t, MethodATM, event.PaymentInfo.Method)
+	contains(t, string(event.RedactedPayload), `"account":"`+account+`"`)
+
+	event, err = client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","status":"charging",` +
+		`"paymentInfo":{"cvsName":"7-11","code":"` + code + `","expiredAt":"2026-09-30T02:00:00.000Z"}}`))
+	noError(t, err)
+	equal(t, code, event.PaymentInfo.Code)
+	contains(t, string(event.RedactedPayload), `"code":"`+code+`"`)
+}
+
 func TestParseWebhookReadsAnIssuedInvoice(t *testing.T) {
 	client := newSigningClient(t, "ming")
 	event, err := client.ParseWebhook([]byte(`{"purpose":"invoice_issued",` +

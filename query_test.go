@@ -40,6 +40,35 @@ func TestGetTransactionReadsTheDocumentedResource(t *testing.T) {
 	equal(t, 0, len(request.Body))
 }
 
+// The transaction object documents ATM paymentInfo as method, bankName,
+// bankCode and account, and CVS as cvsCode plus credentials { cvsName, code,
+// expiredAt }. Without a top-level paymentMethod, a Luhn-valid virtual
+// account or payment code must still reach the caller whole.
+func TestGetTransactionKeepsNonCardPaymentReferences(t *testing.T) {
+	const account = "81200001234564" // Luhn-valid
+	const code = "71100000000002"    // Luhn-valid
+	server, client := newFake(t)
+	server.Success("/transactions/{id}", map[string]any{
+		"id": "P20260928AB12CD34", "amount": 1000,
+		"paymentInfo": map[string]any{"method": "atm", "bankName": "Bank", "bankCode": "812", "account": account},
+	})
+	server.Success("/transactions/{id}", map[string]any{
+		"id": "P20260928AB12CD35", "amount": 1000,
+		"paymentInfo": map[string]any{"method": "cvs", "cvsCode": code, "cvsName": "7-11",
+			"credentials": map[string]any{"cvsName": "7-11", "code": code}},
+	})
+
+	atm, err := client.GetTransaction(context.Background(), "P20260928AB12CD34")
+	noError(t, err)
+	equal(t, account, atm.PaymentInfo.Account)
+	contains(t, string(atm.RedactedPayload), `"account":"`+account+`"`)
+
+	cvs, err := client.GetTransaction(context.Background(), "P20260928AB12CD35")
+	noError(t, err)
+	contains(t, string(cvs.RedactedPayload), `"cvsCode":"`+code+`"`)
+	contains(t, string(cvs.RedactedPayload), `"code":"`+code+`"`)
+}
+
 // Identifiers come from the provider and from callers; a slash in one must
 // not be able to reach a different endpoint.
 func TestGetTransactionEscapesTheIdentifier(t *testing.T) {
