@@ -167,8 +167,8 @@ func (s *Server) ChargeThenFail(endpoint string, status int) {
 	s.QueueResponse(endpoint, Response{StatusCode: status, RecordCharge: true})
 }
 
-// Hang blocks an endpoint until the request context is cancelled or the
-// server is closed. The connection is dropped without writing a response, so
+// Hang blocks an endpoint until the client goes away or the server is
+// closed. The connection is dropped without writing a response, so
 // a client waiting past its timeout sees a transport failure rather than an
 // empty HTTP 200.
 func (s *Server) Hang(endpoint string) {
@@ -332,11 +332,20 @@ func (s *Server) isBlocked(method, path string) bool {
 // handler without hijacking would become an empty HTTP 200 from httptest.
 func (s *Server) hang(writer http.ResponseWriter, request *http.Request) {
 	if hijacker, ok := writer.(http.Hijacker); ok {
-		conn, _, err := hijacker.Hijack()
+		conn, buffered, err := hijacker.Hijack()
 		if err == nil {
 			defer conn.Close()
+			// After Hijack, net/http does not cancel the request context
+			// until this handler returns, so watch the connection itself:
+			// a read ends with EOF or an error once the client goes away.
+			// Closing conn on return ends the read too.
+			gone := make(chan struct{})
+			go func() {
+				defer close(gone)
+				_, _ = io.Copy(io.Discard, buffered)
+			}()
 			select {
-			case <-request.Context().Done():
+			case <-gone:
 			case <-s.closed:
 			}
 			return
