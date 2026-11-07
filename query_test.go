@@ -70,18 +70,31 @@ func TestGetTransactionKeepsNonCardPaymentReferences(t *testing.T) {
 }
 
 // A key that differs from the documented one only in case must not replace
-// it, at the top level or inside paymentInfo.
+// it, at the top level or inside paymentInfo. SanitizeJSON sorts keys, so
+// each variant here sorts after its camelCase key, the order in which
+// encoding/json would let it win.
 func TestTransactionFieldsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
 	server, client := newFake(t)
 	server.Success("/transactions/{id}", map[string]any{
-		"id": "P20260928AB12CD34", "amount": 1000, "Amount": "bad", "orderId": "A", "orderid": "B",
-		"paymentInfo": map[string]any{"method": "atm", "bankCode": "812", "BankCode": "999"},
+		"id": "P20260928AB12CD34", "amount": 1000, "orderId": "A", "orderid": "B",
+		"paymentInfo": map[string]any{"method": "atm", "bankCode": "812", "bankcode": "999"},
 	})
 	transaction, err := client.GetTransaction(context.Background(), "P20260928AB12CD34")
 	noError(t, err)
-	equal(t, Amount(1000), transaction.Amount)
 	equal(t, "A", transaction.OrderID)
 	equal(t, "812", transaction.PaymentInfo.BankCode)
+}
+
+func TestSubscriptionFieldsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
+	server, client := newFake(t)
+	server.Success("/subscriptions/{subscriptionId}", map[string]any{
+		"id": "S20260928AB12CD34", "status": "ongoing", "amount": 1000,
+		"numberOfPeriods": 12, "numberofperiods": 3, "orderId": "A", "orderid": "B",
+	})
+	subscription, err := client.GetSubscription(context.Background(), "S20260928AB12CD34")
+	noError(t, err)
+	equal(t, "A", subscription.OrderID)
+	equal(t, 12, subscription.NumberOfPeriods)
 }
 
 // Identifiers come from the provider and from callers; a slash in one must

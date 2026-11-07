@@ -595,15 +595,15 @@ func TestNonCardPaymentInfoKeepsDocumentedPaymentReferences(t *testing.T) {
 
 // Oen documents exact camelCase keys. encoding/json matches struct fields
 // case-insensitively, so a key that differs only in case must not replace
-// the documented one, at the top level or nested.
+// the documented one, at the top level or nested. SanitizeJSON sorts keys,
+// so each variant here sorts after its camelCase key.
 func TestWebhookFieldsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
 	_, client := newFake(t)
 	event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,` +
-		`"orderId":"A","orderid":"B","amount":1000,"AMOUNT":"bad",` +
-		`"productDetails":[{"name":"x","quantity":1,"unitPrice":1000,"UnitPrice":"bad"}]}`))
+		`"orderId":"A","orderid":"B",` +
+		`"productDetails":[{"name":"x","quantity":1,"unitPrice":1000,"unitprice":"bad"}]}`))
 	noError(t, err)
 	equal(t, "A", event.OrderID)
-	equal(t, Amount(1000), event.Amount)
 	equal(t, Amount(1000), event.Items[0].UnitPrice)
 }
 

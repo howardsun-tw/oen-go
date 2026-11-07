@@ -214,13 +214,20 @@ func idPathSegment(op, field, name, value string) (string, error) {
 // each field only from the key its json tag names exactly. encoding/json
 // also accepts a key that differs only in case, and the last such key wins,
 // so {"orderId":"A","orderid":"B"} would decode as "B". Nested structs,
-// pointers to structs and slices of structs follow the same rule. JSON null
-// leaves v unchanged, as encoding/json does.
+// pointers to structs and slices of structs follow the same rule; a type
+// with its own UnmarshalJSON decodes itself. Every field needs a json key,
+// and an untagged or embedded field is an error. JSON null leaves v
+// unchanged, as encoding/json does.
 func decodeExact(data []byte, v any) error {
 	return decodeExactValue(data, reflect.ValueOf(v).Elem())
 }
 
+var jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
+
 func decodeExactValue(data []byte, target reflect.Value) error {
+	if reflect.PointerTo(target.Type()).Implements(jsonUnmarshalerType) {
+		return json.Unmarshal(data, target.Addr().Interface())
+	}
 	switch target.Kind() {
 	case reflect.Struct:
 		var object map[string]json.RawMessage
@@ -229,9 +236,18 @@ func decodeExactValue(data []byte, target reflect.Value) error {
 		}
 		fields := target.Type()
 		for i := 0; i < fields.NumField(); i++ {
-			name, _, _ := strings.Cut(fields.Field(i).Tag.Get("json"), ",")
+			field := fields.Field(i)
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if name == "-" {
+				continue
+			}
+			if name == "" || field.Anonymous {
+				// encoding/json would match such a field by its Go name or
+				// promote its fields; neither is an exact key.
+				return fmt.Errorf("decodeExact: %s.%s needs a json key", fields.Name(), field.Name)
+			}
 			raw, ok := object[name]
-			if name == "" || name == "-" || !ok {
+			if !ok {
 				continue
 			}
 			if err := decodeExactValue(raw, target.Field(i)); err != nil {

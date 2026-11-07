@@ -47,6 +47,23 @@ func TestChargeTokenUsesTheDocumentedWireContract(t *testing.T) {
 	contains(t, string(request.Body), `"productionCode":"P0001"`)
 }
 
+// encoding/json lets a later key that differs only in case replace the
+// documented one. On a charge that would change the outcome or the
+// transaction a refund later targets.
+func TestChargeResultsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
+	server, client := newFake(t)
+	server.QueueResponse("/token/transactions", oentest.Response{StatusCode: http.StatusOK,
+		Body: []byte(`{"code":"S0000","data":{"id":"P20260928AB12CD34","authCode":"A1","ID":"P20260928ZZZZZZZZ"}}`)})
+	result, err := client.ChargeToken(context.Background(), testCharge())
+	noError(t, err)
+	equal(t, "P20260928AB12CD34", result.TransactionHID)
+
+	server.QueueResponse("/token/transactions", oentest.Response{StatusCode: http.StatusOK,
+		Body: []byte(`{"code":"T0004","message":"declined","Code":"S0000","data":{"id":"P20260928AB12CD34"}}`)})
+	_, err = client.ChargeToken(context.Background(), testCharge())
+	errIs(t, err, ErrDeclined)
+}
+
 func TestChargeTokenSendsInvoiceInformationWhenGiven(t *testing.T) {
 	server, client := newFake(t)
 	charge := testCharge()

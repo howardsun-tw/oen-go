@@ -57,6 +57,18 @@ func TestListStoreSubscriptionsReadsEveryDocumentedField(t *testing.T) {
 	equal(t, "", request.Query)
 }
 
+// Keys that differ from the documented ones only in case must not replace
+// them, including inside user. Each variant sorts after its camelCase key.
+func TestStoreSubscriptionFieldsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
+	server, client := newFake(t)
+	server.Success("/subscriptions", json.RawMessage(`{"subscriptions":[{"id":"sub-store-1","status":"active",`+
+		`"totalAmount":599,"totalamount":1,"user":{"name":"A","email":"a@example.com"},"User":{"name":"B"}}]}`))
+	page, err := client.ListStoreSubscriptions(context.Background(), ListStoreSubscriptionsRequest{})
+	noError(t, err)
+	equal(t, Amount(599), page.Subscriptions[0].TotalAmount)
+	equal(t, Customer{Name: "A", Email: "a@example.com"}, page.Subscriptions[0].Customer)
+}
+
 func TestListStoreSubscriptionsSendsStatusAndPage(t *testing.T) {
 	server, client := newFake(t)
 	_, err := client.ListStoreSubscriptions(context.Background(), ListStoreSubscriptionsRequest{

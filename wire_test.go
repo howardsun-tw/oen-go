@@ -125,3 +125,24 @@ func TestURLPathSegmentEscapesProviderIdentifiers(t *testing.T) {
 	equal(t, "P20240412QJMAZNML", urlPathSegment("P20240412QJMAZNML"))
 	equal(t, "a%2Fb%3Fc", urlPathSegment("a/b?c"))
 }
+
+// A wire type that decodeExact cannot read by exact key must fail loudly
+// instead of leaving fields silently zero, and a type that decodes itself
+// keeps doing so.
+func TestDecodeExactRefusesFieldsWithoutAnExactKey(t *testing.T) {
+	type common struct {
+		ID json.RawMessage `json:"id"`
+	}
+	var embedded struct {
+		common
+	}
+	hasError(t, decodeExact([]byte(`{"id":"A"}`), &embedded))
+	var untagged struct{ ID json.RawMessage }
+	hasError(t, decodeExact([]byte(`{"ID":"A"}`), &untagged))
+
+	var timed struct {
+		At time.Time `json:"at"`
+	}
+	noError(t, decodeExact([]byte(`{"at":"2026-09-28T02:40:25.502Z"}`), &timed))
+	equal(t, time.Date(2026, 9, 28, 2, 40, 25, 502000000, time.UTC), timed.At)
+}

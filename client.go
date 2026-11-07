@@ -136,13 +136,13 @@ func (c *Client) do(ctx context.Context, op, method, path string, body []byte, k
 	}
 
 	var env envelope
-	decodeErr := json.Unmarshal(raw, &env)
+	decodeErr := decodeExact(raw, &env)
 	if classified := classify(op, method, httpResponse.StatusCode, httpResponse.Header, &env, decodeErr, c.cfg.Now()); classified != nil {
 		if normalizeCode(classified.Code) == CodeIdempotencyUnknownOutcome {
 			var detail struct {
 				ResourceID string `json:"resourceId"`
 			}
-			if json.Unmarshal(env.Detail, &detail) == nil {
+			if decodeExact(env.Detail, &detail) == nil {
 				classified.ResourceID = detail.ResourceID
 			}
 		}
@@ -162,7 +162,7 @@ func decodeData(op string, resp response, target any) error {
 	if isNullRaw(resp.env.Data) {
 		return unknownResponseOutcome(op, resp, errors.New("response carries no data object"))
 	}
-	if err := json.Unmarshal(resp.env.Data, target); err != nil {
+	if err := decodeExact(resp.env.Data, target); err != nil {
 		return unknownResponseOutcome(op, resp, fmt.Errorf("decode response data: %w", err))
 	}
 	return nil
