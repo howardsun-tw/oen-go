@@ -17,9 +17,10 @@ import (
 	"unicode/utf8"
 )
 
-// The acknowledgement Oen expects. Oen retries a failed webhook three times,
-// two, four and six seconds apart, so an endpoint that cannot answer 200
-// quickly will be called again.
+// The acknowledgement Oen expects. Oen delivers a notification at most three
+// times in all, about two and then four seconds apart, waiting 10 seconds for
+// each answer, and never sends it again after the third failure. An endpoint
+// that cannot answer 200 quickly is called again.
 var (
 	AckStatus      = http.StatusOK
 	AckContentType = "application/json"
