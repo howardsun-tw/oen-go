@@ -610,6 +610,27 @@ func TestOnlyTheDocumentedMethodKeyLiftsPaymentInfoMasking(t *testing.T) {
 		notContains(t, string(event.RedactedPayload), "4111111111111111")
 		notContains(t, event.PaymentInfo.Text, "4111111111111111")
 	}
+
+	// The lift applies only to the documented paymentInfo key, and only for
+	// a method Oen documents as non-card. Any other method, such as a card
+	// method under a new name, falls back to the Luhn check.
+	for _, fields := range []string{
+		`"paymentMethod":"linePay","PaymentInfo":"4111111111111111"`,
+		`"paymentMethod":"linePay","payment_info":"4111111111111111"`,
+		`"paymentMethod":"creditCard","paymentInfo":"4111111111111111"`,
+		`"paymentMethod":"googlePay","paymentInfo":"4111111111111111"`,
+	} {
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,` + fields + `}`))
+		noError(t, err)
+		notContains(t, string(event.RedactedPayload), "4111111111111111")
+		notContains(t, event.PaymentInfo.Text, "4111111111111111")
+	}
+	for _, method := range []string{"linePay", "cvs", "atm"} {
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,` +
+			`"paymentMethod":"` + method + `","paymentInfo":"4111111111111111"}`))
+		noError(t, err)
+		equal(t, "4111111111111111", event.PaymentInfo.Text)
+	}
 }
 
 // Oen documents exact camelCase keys. encoding/json matches struct fields

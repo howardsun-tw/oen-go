@@ -21,8 +21,11 @@ Checked against [the official text export](https://developer.oen.tw/llms-full.tx
   `SubscribeToken` `subscriptionId` of `.` or `..`, which no later call
   could query or refund.
 - Only the exact `paymentMethod` key beside `paymentInfo` can mark a payment
-  as non-card and lift card number masking. A `method` key or any other
-  spelling there can only mark a card payment.
+  as non-card and lift card number masking, only with a method Oen documents
+  as non-card (`linePay`, `cvs`, `atm`), and only for the exact
+  `paymentInfo` key. A `method` key or any other spelling can only mark a
+  card payment, and any other method value, or another spelling of
+  `paymentInfo`, keeps the Luhn check on.
 - A Subscription API event reads only `id` and `status` from
   `data.subscription`, so a field the event does not expose cannot reject it.
 
@@ -299,7 +302,7 @@ own responses and sending an empty string is not the same as sending nothing.
 - Scalar `paymentInfo` is redacted before building returned DTOs when the
   payload names a card or Apple Pay payment or a token binding, or names no payment method
   and the value looks like a card number (13–19 digits passing Luhn); LINE
-  Pay and other explicitly non-card references remain intact. Inside a
+  Pay, CVS and ATM references remain intact. Inside a
   `paymentInfo` object or array in those contexts, any scalar that looks like
   a card number is reduced to its last four digits regardless of its key.
 - Free-text fields (`message`, `note`, `reason`) are passed through

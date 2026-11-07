@@ -114,15 +114,23 @@ func sanitizeNode(key string, value any, mask panMask) any {
 			// meaning depends on siblings: a card payment or token binding
 			// always carries the card number, LINE Pay carries its own
 			// reference, and a payload that says nothing is masked whenever
-			// the value looks like a card number.
-			if normalizeKey(childKey) == "paymentinfo" && context != paymentContextOther {
-				if masked, ok := maskPaymentInfoScalar(childValue, context); ok {
-					clean[childKey] = masked
-					continue
+			// the value looks like a card number. Only the documented
+			// paymentInfo key, the one the typed fields read, may keep a
+			// non-card reference unmasked; any other spelling is checked.
+			if normalizeKey(childKey) == "paymentinfo" {
+				childContext := context
+				if childContext == paymentContextOther && childKey != "paymentInfo" {
+					childContext = paymentContextUnknown
 				}
-				childMask = panMaskUnknown
-				if context == paymentContextCard {
-					childMask = panMaskCard
+				if childContext != paymentContextOther {
+					if masked, ok := maskPaymentInfoScalar(childValue, childContext); ok {
+						clean[childKey] = masked
+						continue
+					}
+					childMask = panMaskUnknown
+					if childContext == paymentContextCard {
+						childMask = panMaskCard
+					}
 				}
 			}
 			clean[childKey] = sanitizeNode(childKey, childValue, childMask)
@@ -223,16 +231,29 @@ func paymentContextOf(object map[string]any) paymentContext {
 			// Apple Pay settles on a card, so its paymentInfo is card data.
 			// Any spelling of either key may push toward masking, but only
 			// paymentMethod, the key the typed fields read beside
-			// paymentInfo, may say the payment is not a card.
+			// paymentInfo, may say the payment is not a card, and only with
+			// a method Oen documents as non-card. Any other value, such as a
+			// card method under a new name, leaves the Luhn check on.
 			if strings.EqualFold(text, string(MethodCard)) || strings.EqualFold(text, string(MethodApplePay)) {
 				return paymentContextCard
 			}
-			if text != "" && key == "paymentMethod" {
+			if key == "paymentMethod" && isNonCardMethod(text) {
 				context = paymentContextOther
 			}
 		}
 	}
 	return context
+}
+
+// isNonCardMethod reports a payment method Oen documents as not settling on
+// a card.
+func isNonCardMethod(method string) bool {
+	for _, nonCard := range []PaymentMethod{MethodLinePay, MethodCVS, MethodATM} {
+		if strings.EqualFold(method, string(nonCard)) {
+			return true
+		}
+	}
+	return false
 }
 
 // maskPaymentInfoScalar reduces a scalar paymentInfo to its last four
