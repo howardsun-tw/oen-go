@@ -3,6 +3,7 @@ package oen
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // CheckoutRequest opens Oen's hosted page for one payment (取得單次交易頁面).
@@ -212,6 +213,11 @@ func (c *Client) hostedPage(ctx context.Context, op, path, redirectPath string, 
 	id := rawString(data.ID)
 	if id == "" {
 		return nil, unknownResponseOutcome(op, resp, errNoField("data.id"))
+	}
+	// The id goes into RedirectURL's path, where a browser would resolve a
+	// dot segment to another page.
+	if id == "." || id == ".." {
+		return nil, unknownResponseOutcome(op, resp, fmt.Errorf("data.id %q is not a valid identifier", id))
 	}
 	return &CheckoutSession{
 		ID:             id,

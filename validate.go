@@ -15,8 +15,10 @@ const providerDateLayout = "2006/01/02"
 // validatePurchase checks everything Oen requires of an amount-bearing
 // request before it is sent, and returns the currency to use.
 func (c *Client) validatePurchase(op, orderID string, amount Amount, currency string, items []LineItem) (string, error) {
-	if strings.TrimSpace(orderID) == "" {
-		return "", newValidationError(op, "orderId", "order ID is required")
+	// The same rule ListOrderTransactions applies, so every order the SDK
+	// creates can be reconciled by its orderId.
+	if _, err := pathSegment(op, "orderId", "order ID", orderID); err != nil {
+		return "", err
 	}
 	if !amount.Valid() {
 		return "", newValidationError(op, "amount", "amount must be positive")

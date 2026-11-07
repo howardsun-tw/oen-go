@@ -64,6 +64,38 @@ func TestChargeResultsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
 	errIs(t, err, ErrDeclined)
 }
 
+// ListOrderTransactions refuses "." and "..", so an order created with one
+// could never be reconciled after an unknown outcome. Refuse it up front.
+func TestPurchasesRefuseOrderIDsThatCannotBeQueried(t *testing.T) {
+	for _, orderID := range []string{".", ".."} {
+		server, client := newFake(t)
+		charge := testCharge()
+		charge.OrderID = orderID
+		_, err := client.ChargeToken(context.Background(), charge)
+		errIs(t, err, ErrInvalidInput)
+		_, err = client.CreateCheckout(context.Background(), CheckoutRequest{
+			OrderID: orderID, Amount: 1000, Items: testItems(),
+			SuccessURL: "https://merchant.example/paid", FailureURL: "https://merchant.example/failed",
+		})
+		errIs(t, err, ErrInvalidInput)
+		equal(t, 0, len(server.Requests()))
+	}
+}
+
+// A hosted page id goes into the redirect path. "." or ".." would send the
+// buyer to another page once the browser resolves it.
+func TestHostedPageRefusesAnIDThatChangesTheRedirectPath(t *testing.T) {
+	for _, id := range []string{".", ".."} {
+		server, client := newFake(t)
+		server.Success("/checkout-token", map[string]any{"id": id})
+		session, err := client.CreateTokenCheckout(context.Background(), TokenCheckoutRequest{
+			SuccessURL: "https://merchant.example/bound", FailureURL: "https://merchant.example/failed",
+		})
+		errIs(t, err, ErrUnknownOutcome)
+		isTrue(t, session == nil)
+	}
+}
+
 func TestChargeTokenSendsInvoiceInformationWhenGiven(t *testing.T) {
 	server, client := newFake(t)
 	charge := testCharge()

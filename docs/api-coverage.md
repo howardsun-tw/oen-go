@@ -12,9 +12,12 @@ Checked against [the official text export](https://developer.oen.tw/llms-full.tx
   instead of replacing `orderId`. The `subscription` package still decodes
   case-insensitively; that is a follow-up.
 - Path identifiers `.` and `..` are refused locally by every Payment API
-  method that puts an identifier in the path. Transaction and subscription
-  IDs with surrounding whitespace are refused too, because their documented
-  format is alphanumeric. `orderId` is still sent as given.
+  method that puts an identifier in the path, and as an `orderId` when an
+  order is created, so every order can be queried by its `orderId`.
+  Transaction and subscription IDs with surrounding whitespace are refused
+  too, because their documented format is alphanumeric. `orderId` is still
+  sent as given. A hosted page `id` of `.` or `..`, which would change the
+  redirect path, is an unknown outcome.
 - A Subscription API event reads only `id` and `status` from
   `data.subscription`, so a field the event does not expose cannot reject it.
 

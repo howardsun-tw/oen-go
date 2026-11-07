@@ -146,3 +146,22 @@ func TestDecodeExactRefusesFieldsWithoutAnExactKey(t *testing.T) {
 	noError(t, decodeExact([]byte(`{"at":"2026-09-28T02:40:25.502Z"}`), &timed))
 	equal(t, time.Date(2026, 9, 28, 2, 40, 25, 502000000, time.UTC), timed.At)
 }
+
+// Containers of structs follow the exact-key rule, or fail loudly where
+// decodeExact cannot apply it.
+func TestDecodeExactCoversContainersOfStructs(t *testing.T) {
+	type item struct {
+		UnitPrice json.RawMessage `json:"unitPrice"`
+	}
+	var pointers struct {
+		Items []*item `json:"items"`
+	}
+	noError(t, decodeExact([]byte(`{"items":[{"unitPrice":1,"unitprice":2}]}`), &pointers))
+	equal(t, `1`, string(pointers.Items[0].UnitPrice))
+
+	var keyed struct {
+		Items map[string]item `json:"items"`
+	}
+	hasError(t, decodeExact([]byte(`{"items":{"a":{"unitPrice":1}}}`), &keyed))
+
+}

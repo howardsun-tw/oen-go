@@ -57,16 +57,16 @@ func TestListStoreSubscriptionsReadsEveryDocumentedField(t *testing.T) {
 	equal(t, "", request.Query)
 }
 
-// Keys that differ from the documented ones only in case must not replace
-// them, including inside user. Each variant sorts after its camelCase key.
+// A key that differs from the documented one only in case must not replace
+// it. SanitizeJSON sorts keys, so the variant sorts after its camelCase key;
+// an all-lowercase key such as user has no variant that sorts after it.
 func TestStoreSubscriptionFieldsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
 	server, client := newFake(t)
 	server.Success("/subscriptions", json.RawMessage(`{"subscriptions":[{"id":"sub-store-1","status":"active",`+
-		`"totalAmount":599,"totalamount":1,"user":{"name":"A","email":"a@example.com"},"User":{"name":"B"}}]}`))
+		`"totalAmount":599,"totalamount":1}]}`))
 	page, err := client.ListStoreSubscriptions(context.Background(), ListStoreSubscriptionsRequest{})
 	noError(t, err)
 	equal(t, Amount(599), page.Subscriptions[0].TotalAmount)
-	equal(t, Customer{Name: "A", Email: "a@example.com"}, page.Subscriptions[0].Customer)
 }
 
 func TestListStoreSubscriptionsSendsStatusAndPage(t *testing.T) {

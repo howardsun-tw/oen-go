@@ -213,19 +213,40 @@ func idPathSegment(op, field, name, value string) (string, error) {
 // decodeExact decodes a JSON object into the struct v points to, reading
 // each field only from the key its json tag names exactly. encoding/json
 // also accepts a key that differs only in case, and the last such key wins,
-// so {"orderId":"A","orderid":"B"} would decode as "B". Nested structs,
-// pointers to structs and slices of structs follow the same rule; a type
-// with its own UnmarshalJSON decodes itself. Every field needs a json key,
-// and an untagged or embedded field is an error. JSON null leaves v
-// unchanged, as encoding/json does.
+// so {"orderId":"A","orderid":"B"} would decode as "B". Structs inside
+// pointers and slices follow the same rule; a type with its own
+// UnmarshalJSON decodes itself. An exported field needs a json key, and an
+// untagged or embedded one, or a struct inside a map or array, is an error.
+// Unexported fields are ignored. JSON null leaves v unchanged, as
+// encoding/json does.
 func decodeExact(data []byte, v any) error {
 	return decodeExactValue(data, reflect.ValueOf(v).Elem())
 }
 
 var jsonUnmarshalerType = reflect.TypeFor[json.Unmarshaler]()
 
+func decodesItself(t reflect.Type) bool {
+	return reflect.PointerTo(t).Implements(jsonUnmarshalerType)
+}
+
+// holdsStruct reports whether encoding/json would decode a struct somewhere
+// inside a value of type t by its own case-insensitive rules.
+func holdsStruct(t reflect.Type) bool {
+	if decodesItself(t) {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		return true
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+		return holdsStruct(t.Elem())
+	default:
+		return false
+	}
+}
+
 func decodeExactValue(data []byte, target reflect.Value) error {
-	if reflect.PointerTo(target.Type()).Implements(jsonUnmarshalerType) {
+	if !holdsStruct(target.Type()) || isNullRaw(data) {
 		return json.Unmarshal(data, target.Addr().Interface())
 	}
 	switch target.Kind() {
@@ -237,6 +258,9 @@ func decodeExactValue(data []byte, target reflect.Value) error {
 		fields := target.Type()
 		for i := 0; i < fields.NumField(); i++ {
 			field := fields.Field(i)
+			if !field.IsExported() && !field.Anonymous {
+				continue
+			}
 			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 			if name == "-" {
 				continue
@@ -256,9 +280,6 @@ func decodeExactValue(data []byte, target reflect.Value) error {
 		}
 		return nil
 	case reflect.Pointer:
-		if target.Type().Elem().Kind() != reflect.Struct || isNullRaw(data) {
-			break
-		}
 		value := reflect.New(target.Type().Elem())
 		if err := decodeExactValue(data, value.Elem()); err != nil {
 			return err
@@ -266,9 +287,6 @@ func decodeExactValue(data []byte, target reflect.Value) error {
 		target.Set(value)
 		return nil
 	case reflect.Slice:
-		if target.Type().Elem().Kind() != reflect.Struct || isNullRaw(data) {
-			break
-		}
 		var elements []json.RawMessage
 		if err := json.Unmarshal(data, &elements); err != nil {
 			return err
@@ -281,6 +299,7 @@ func decodeExactValue(data []byte, target reflect.Value) error {
 		}
 		target.Set(slice)
 		return nil
+	default:
+		return fmt.Errorf("decodeExact: cannot decode %s by exact key", target.Type())
 	}
-	return json.Unmarshal(data, target.Addr().Interface())
 }
