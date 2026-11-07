@@ -184,3 +184,27 @@ func firstNonEmpty(values ...string) string {
 }
 
 func urlPathSegment(value string) string { return url.PathEscape(value) }
+
+// pathSegment validates one caller identifier and escapes it for an API path.
+// url.PathEscape leaves "." and "..", which a server or proxy may resolve
+// against the path, so they are refused. The value is otherwise sent as
+// given: orderId is the merchant's own reference.
+func pathSegment(op, field, name, value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", newValidationError(op, field, name+" is required")
+	}
+	if value == "." || value == ".." {
+		return "", newValidationError(op, field, name+" is not a valid identifier")
+	}
+	return urlPathSegment(value), nil
+}
+
+// idPathSegment is pathSegment for Oen's transaction and subscription
+// identifiers, which have a documented alphanumeric format, so surrounding
+// whitespace is a caller mistake rather than part of the value.
+func idPathSegment(op, field, name, value string) (string, error) {
+	if trimmed := strings.TrimSpace(value); trimmed != "" && trimmed != value {
+		return "", newValidationError(op, field, name+" has surrounding whitespace")
+	}
+	return pathSegment(op, field, name, value)
+}

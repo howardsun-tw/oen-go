@@ -79,6 +79,72 @@ func TestGetTransactionEscapesTheIdentifier(t *testing.T) {
 	equal(t, "/transactions/..%2Forder%2FORDER00001%2Ftransactions", request.RawPath)
 }
 
+// url.PathEscape leaves "." and ".." alone, so "/order/../transactions" would
+// address the merchant-wide list once a server or proxy resolved it.
+func TestPathIdentifiersRejectDotSegments(t *testing.T) {
+	calls := map[string]func(*Client, string) error{
+		"GetTransaction": func(c *Client, id string) error { _, err := c.GetTransaction(context.Background(), id); return err },
+		"ListOrderTransactions": func(c *Client, id string) error {
+			_, err := c.ListOrderTransactions(context.Background(), id)
+			return err
+		},
+		"GetSubscription": func(c *Client, id string) error { _, err := c.GetSubscription(context.Background(), id); return err },
+		"CancelSubscription": func(c *Client, id string) error {
+			_, err := c.CancelSubscription(context.Background(), CancelSubscriptionRequest{SubscriptionID: id})
+			return err
+		},
+		"Refund": func(c *Client, id string) error {
+			_, err := c.Refund(context.Background(), RefundRequest{TransactionHID: id, Amount: 1000, Items: testItems()})
+			return err
+		},
+	}
+	for name, call := range calls {
+		for _, id := range []string{".", ".."} {
+			t.Run(name+"/"+id, func(t *testing.T) {
+				server, client := newFake(t)
+				errIs(t, call(client, id), ErrInvalidInput)
+				equal(t, 0, len(server.Requests()))
+			})
+		}
+	}
+}
+
+// Transaction and subscription identifiers have a documented alphanumeric
+// format, so surrounding whitespace is a caller mistake and is refused
+// rather than sent as %20.
+func TestFormattedIdentifiersRejectSurroundingWhitespace(t *testing.T) {
+	calls := map[string]func(*Client, string) error{
+		"GetTransaction":  func(c *Client, id string) error { _, err := c.GetTransaction(context.Background(), id); return err },
+		"GetSubscription": func(c *Client, id string) error { _, err := c.GetSubscription(context.Background(), id); return err },
+		"CancelSubscription": func(c *Client, id string) error {
+			_, err := c.CancelSubscription(context.Background(), CancelSubscriptionRequest{SubscriptionID: id})
+			return err
+		},
+		"Refund": func(c *Client, id string) error {
+			_, err := c.Refund(context.Background(), RefundRequest{TransactionHID: id, Amount: 1000, Items: testItems()})
+			return err
+		},
+	}
+	for name, call := range calls {
+		for _, id := range []string{" P20240412QJMAZNML", "P20240412QJMAZNML\n"} {
+			t.Run(name, func(t *testing.T) {
+				server, client := newFake(t)
+				errIs(t, call(client, id), ErrInvalidInput)
+				equal(t, 0, len(server.Requests()))
+			})
+		}
+	}
+}
+
+// orderId is the merchant's own reference, which the checkout calls send as
+// given, so a query for it must address the same bytes.
+func TestListOrderTransactionsSendsTheOrderIDAsGiven(t *testing.T) {
+	server, client := newFake(t)
+	_, err := client.ListOrderTransactions(context.Background(), " A1")
+	noError(t, err)
+	equal(t, "/order/%20A1/transactions", server.Requests()[0].RawPath)
+}
+
 func TestGetTransactionRequiresAnIdentifier(t *testing.T) {
 	server, client := newFake(t)
 	_, err := client.GetTransaction(context.Background(), "  ")

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strings"
 )
 
 // ListTransactionsRequest filters the merchant's transaction list
@@ -41,10 +40,11 @@ type CancelSubscriptionRequest struct {
 // identifier Oen exposes: the transaction HID or the transaction ID.
 func (c *Client) GetTransaction(ctx context.Context, transactionID string) (*Transaction, error) {
 	const op = "GetTransaction"
-	if strings.TrimSpace(transactionID) == "" {
-		return nil, newValidationError(op, "id", "transaction ID is required")
+	segment, err := idPathSegment(op, "id", "transaction ID", transactionID)
+	if err != nil {
+		return nil, err
 	}
-	resp, err := c.get(ctx, op, "/transactions/"+urlPathSegment(transactionID))
+	resp, err := c.get(ctx, op, "/transactions/"+segment)
 	if err != nil {
 		return nil, err
 	}
@@ -67,10 +67,11 @@ func (c *Client) GetTransaction(ctx context.Context, transactionID string) (*Tra
 // reconciliation and any decision to resend.
 func (c *Client) ListOrderTransactions(ctx context.Context, orderID string) ([]Transaction, error) {
 	const op = "ListOrderTransactions"
-	if strings.TrimSpace(orderID) == "" {
-		return nil, newValidationError(op, "orderId", "order ID is required")
+	segment, err := pathSegment(op, "orderId", "order ID", orderID)
+	if err != nil {
+		return nil, err
 	}
-	resp, err := c.get(ctx, op, "/order/"+urlPathSegment(orderID)+"/transactions")
+	resp, err := c.get(ctx, op, "/order/"+segment+"/transactions")
 	if err != nil {
 		return nil, err
 	}
@@ -105,10 +106,11 @@ func (c *Client) ListTransactions(ctx context.Context, req ListTransactionsReque
 // GetSubscription reads one subscription (查詢定期定額明細).
 func (c *Client) GetSubscription(ctx context.Context, subscriptionID string) (*Subscription, error) {
 	const op = "GetSubscription"
-	if strings.TrimSpace(subscriptionID) == "" {
-		return nil, newValidationError(op, "subscriptionId", "subscription ID is required")
+	segment, err := idPathSegment(op, "subscriptionId", "subscription ID", subscriptionID)
+	if err != nil {
+		return nil, err
 	}
-	resp, err := c.get(ctx, op, "/subscriptions/"+urlPathSegment(subscriptionID))
+	resp, err := c.get(ctx, op, "/subscriptions/"+segment)
 	if err != nil {
 		return nil, err
 	}
@@ -120,13 +122,14 @@ func (c *Client) GetSubscription(ctx context.Context, subscriptionID string) (*S
 // Subscription.HasAmount before using the returned Amount.
 func (c *Client) CancelSubscription(ctx context.Context, req CancelSubscriptionRequest) (*Subscription, error) {
 	const op = "CancelSubscription"
-	if strings.TrimSpace(req.SubscriptionID) == "" {
-		return nil, newValidationError(op, "subscriptionId", "subscription ID is required")
+	segment, err := idPathSegment(op, "subscriptionId", "subscription ID", req.SubscriptionID)
+	if err != nil {
+		return nil, err
 	}
 	payload := map[string]any{"merchantId": c.cfg.MerchantID}
 	addOptional(payload, "reason", req.Reason)
 
-	resp, err := c.put(ctx, op, "/subscriptions/"+urlPathSegment(req.SubscriptionID), payload, req.IdempotencyKey)
+	resp, err := c.put(ctx, op, "/subscriptions/"+segment, payload, req.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}

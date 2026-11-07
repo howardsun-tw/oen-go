@@ -2,7 +2,6 @@ package oen
 
 import (
 	"context"
-	"strings"
 )
 
 // RefundRequest returns money from one transaction (退款).
@@ -32,8 +31,9 @@ type RefundRequest struct {
 // read the transaction with [Client.GetTransaction] before refunding again.
 func (c *Client) Refund(ctx context.Context, req RefundRequest) (*Transaction, error) {
 	const op = "Refund"
-	if strings.TrimSpace(req.TransactionHID) == "" {
-		return nil, newValidationError(op, "transactionHid", "transaction HID is required")
+	segment, err := idPathSegment(op, "transactionHid", "transaction HID", req.TransactionHID)
+	if err != nil {
+		return nil, err
 	}
 	if !req.Amount.Valid() {
 		return nil, newValidationError(op, "amount", "refund amount must be positive")
@@ -59,7 +59,7 @@ func (c *Client) Refund(ctx context.Context, req RefundRequest) (*Transaction, e
 		}
 	}
 
-	resp, err := c.post(ctx, op, "/refunds/"+urlPathSegment(req.TransactionHID), payload, req.IdempotencyKey)
+	resp, err := c.post(ctx, op, "/refunds/"+segment, payload, req.IdempotencyKey)
 	if err != nil {
 		return nil, err
 	}
