@@ -6,9 +6,11 @@ What this SDK implements, measured against Oen's own documentation.
 
 Checked against [the official text export](https://developer.oen.tw/llms-full.txt).
 
-- Webhook, transaction, subscription and store subscription fields are read
-  only from the exact camelCase key Oen documents. A key that differs only in
-  case, such as `orderid`, is ignored instead of replacing `orderId`.
+- Payment API webhook, transaction, payment info and subscription fields,
+  and store subscriptions, are read only from the exact camelCase key Oen
+  documents. A key that differs only in case, such as `orderid`, is ignored
+  instead of replacing `orderId`. The `subscription` package still decodes
+  case-insensitively; that is a follow-up.
 - Path identifiers `.` and `..` are refused locally by every Payment API
   method that puts an identifier in the path. Transaction and subscription
   IDs with surrounding whitespace are refused too, because their documented
