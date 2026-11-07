@@ -3,6 +3,7 @@ package oen
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 // TokenChargeRequest charges a card token once (用 Token 發起單筆交易).
@@ -111,6 +112,9 @@ func (c *Client) ChargeToken(ctx context.Context, req TokenChargeRequest) (*Char
 	if id == "" {
 		return nil, unknownResponseOutcome(op, resp, errNoField("data.id"))
 	}
+	if isDotSegment(id) {
+		return nil, unknownResponseOutcome(op, resp, fmt.Errorf("data.id %q cannot be queried", id))
+	}
 	return &ChargeResult{
 		TransactionHID:  id,
 		AuthCode:        rawString(data.AuthCode),
@@ -155,6 +159,9 @@ func (c *Client) SubscribeToken(ctx context.Context, req TokenSubscriptionReques
 	subscriptionID := rawString(data.SubscriptionID)
 	if subscriptionID == "" {
 		return nil, unknownResponseOutcome(op, resp, errNoField("data.subscriptionId"))
+	}
+	if isDotSegment(subscriptionID) {
+		return nil, unknownResponseOutcome(op, resp, fmt.Errorf("data.subscriptionId %q cannot be queried", subscriptionID))
 	}
 	return &SubscriptionResult{
 		SubscriptionID:  subscriptionID,

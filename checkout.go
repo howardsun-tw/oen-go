@@ -216,7 +216,7 @@ func (c *Client) hostedPage(ctx context.Context, op, path, redirectPath string, 
 	}
 	// The id goes into RedirectURL's path, where a browser would resolve a
 	// dot segment to another page.
-	if id == "." || id == ".." {
+	if isDotSegment(id) {
 		return nil, unknownResponseOutcome(op, resp, fmt.Errorf("data.id %q is not a valid identifier", id))
 	}
 	return &CheckoutSession{

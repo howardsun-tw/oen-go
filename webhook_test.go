@@ -586,10 +586,28 @@ func TestNonCardPaymentInfoKeepsDocumentedPaymentReferences(t *testing.T) {
 		`{"bankCode":"812","account":{"number":"4242424242424242"}}`,
 		`{"bankCode":"812","account":"x","ACCOUNT":"4242424242424242"}`,
 		`{"cvsName":"7-11","cvs_code":"4242424242424242"}`,
+		`{"cardType":"VISA","bankCode":"812","account":"4242424242424242"}`,
+		`{"cardNum":"424242******4242","cvsName":"x","code":"4242424242424242"}`,
+		`{"bankCode":null,"account":"4242424242424242"}`,
+		`{"bankCode":"","account":"4242424242424242"}`,
 	} {
 		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","paymentInfo":` + info + `}`))
 		noError(t, err)
 		notContains(t, string(event.RedactedPayload), "4242424242424242")
+	}
+}
+
+// The typed fields ignore a variant of paymentMethod, so the variant must not
+// lift masking either: only the documented key may say the payment is not a
+// card.
+func TestOnlyTheDocumentedMethodKeyLiftsPaymentInfoMasking(t *testing.T) {
+	_, client := newFake(t)
+	for _, key := range []string{"Payment_Method", "paymentmethod", "METHOD"} {
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,` +
+			`"` + key + `":"linePay","paymentInfo":"4111111111111111"}`))
+		noError(t, err)
+		notContains(t, string(event.RedactedPayload), "4111111111111111")
+		notContains(t, event.PaymentInfo.Text, "4111111111111111")
 	}
 }
 

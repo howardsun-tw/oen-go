@@ -101,7 +101,7 @@ func sanitizeNode(key string, value any, mask panMask) any {
 	case map[string]any:
 		clean := make(map[string]any, len(value))
 		context := paymentContextOf(value)
-		exemptReferences := mask == panMaskUnknown && context != paymentContextCard
+		exemptReferences := mask == panMaskUnknown && context != paymentContextCard && !hasCardFields(value)
 		for childKey, childValue := range value {
 			childMask := mask
 			if exemptReferences && isNonCardReference(value, childKey) {
@@ -150,15 +150,19 @@ func sanitizeNode(key string, value any, mask panMask) any {
 }
 
 // isNonCardReference reports whether key holds a non-card payment reference
-// in the ATM or CVS layout Oen documents for object: account beside bankCode
-// or bankName, and code or cvsCode beside cvsName. A virtual account or
+// in the ATM or CVS layout Oen documents for object: account beside a
+// non-empty bankCode or bankName, and code or cvsCode beside a non-empty
+// cvsName. A virtual account or
 // payment code can pass the Luhn check, and the payer needs it whole. Only
 // the exact documented keys qualify, since a case or separator variant is
 // not decoded and would otherwise keep a card number in RedactedPayload.
 // The caller skips objects that name a card method, and nothing below
 // object is exempt.
 func isNonCardReference(object map[string]any, key string) bool {
-	has := func(sibling string) bool { _, ok := object[sibling]; return ok }
+	has := func(sibling string) bool {
+		text, ok := object[sibling].(string)
+		return ok && strings.TrimSpace(text) != ""
+	}
 	switch key {
 	case "account":
 		return has("bankCode") || has("bankName")
@@ -167,6 +171,19 @@ func isNonCardReference(object map[string]any, key string) bool {
 	default:
 		return false
 	}
+}
+
+// hasCardFields reports card data beside the payment references, from which
+// decodePaymentInfo infers a card payment. Any spelling counts, so a variant
+// can only keep masking on.
+func hasCardFields(object map[string]any) bool {
+	for key := range object {
+		switch normalizeKey(key) {
+		case "cardnum", "cardnumber", "cardtype", "cardname":
+			return true
+		}
+	}
+	return false
 }
 
 // paymentContext is what a payload says about its own payment method.
@@ -201,10 +218,13 @@ func paymentContextOf(object map[string]any) paymentContext {
 			}
 		case "paymentmethod", "method":
 			// Apple Pay settles on a card, so its paymentInfo is card data.
+			// Any spelling of the key may push toward masking, but only the
+			// documented key, the one the typed fields read, may say the
+			// payment is not a card.
 			if strings.EqualFold(text, string(MethodCard)) || strings.EqualFold(text, string(MethodApplePay)) {
 				return paymentContextCard
 			}
-			if text != "" {
+			if text != "" && (key == "paymentMethod" || key == "method") {
 				context = paymentContextOther
 			}
 		}

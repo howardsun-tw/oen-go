@@ -168,7 +168,8 @@ func (s *Server) ChargeThenFail(endpoint string, status int) {
 }
 
 // Hang blocks an endpoint until the client goes away or the server is
-// closed. The connection is dropped without writing a response, so
+// closed. A client that half-closes its side after sending the request
+// counts as gone; Go's http.Transport never does. The connection is dropped without writing a response, so
 // a client waiting past its timeout sees a transport failure rather than an
 // empty HTTP 200.
 func (s *Server) Hang(endpoint string) {

@@ -96,6 +96,24 @@ func TestHostedPageRefusesAnIDThatChangesTheRedirectPath(t *testing.T) {
 	}
 }
 
+// Refund, GetTransaction and GetSubscription refuse "." and "..", so a
+// charge that returned one could never be queried or refunded. Treat it as
+// an unknown outcome, the same as a missing id.
+func TestTokenWritesRefuseIDsThatCannotBeQueried(t *testing.T) {
+	for _, id := range []string{".", ".."} {
+		server, client := newFake(t)
+		server.Success("/token/transactions", map[string]any{"id": id, "authCode": "A1"})
+		_, err := client.ChargeToken(context.Background(), testCharge())
+		errIs(t, err, ErrUnknownOutcome)
+
+		server.Success("/token/subscriptions", map[string]any{"subscriptionId": id, "transactionId": "P20260928AB12CD34"})
+		_, err = client.SubscribeToken(context.Background(), TokenSubscriptionRequest{
+			OrderID: "ORDER00001", Token: testToken, Amount: 1000, Items: testItems(), NumberOfPeriods: 12,
+		})
+		errIs(t, err, ErrUnknownOutcome)
+	}
+}
+
 func TestChargeTokenSendsInvoiceInformationWhenGiven(t *testing.T) {
 	server, client := newFake(t)
 	charge := testCharge()

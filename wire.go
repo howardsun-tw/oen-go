@@ -194,11 +194,15 @@ func pathSegment(op, field, name, value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
 		return "", newValidationError(op, field, name+" is required")
 	}
-	if value == "." || value == ".." {
+	if isDotSegment(value) {
 		return "", newValidationError(op, field, name+" is not a valid identifier")
 	}
 	return urlPathSegment(value), nil
 }
+
+// isDotSegment reports "." or "..", which url.PathEscape leaves as they are
+// and a server, proxy or browser resolves against the rest of the path.
+func isDotSegment(value string) bool { return value == "." || value == ".." }
 
 // idPathSegment is pathSegment for Oen's transaction and subscription
 // identifiers, which have a documented alphanumeric format, so surrounding
@@ -218,7 +222,9 @@ func idPathSegment(op, field, name, value string) (string, error) {
 // UnmarshalJSON decodes itself. An exported field needs a json key, and an
 // untagged or embedded one, or a struct inside a map or array, is an error.
 // Unexported fields are ignored. JSON null leaves v unchanged, as
-// encoding/json does.
+// encoding/json does. Tag options such as ",string" and encoding/json's rule
+// for two fields with one name are not supported; the wire types use
+// neither.
 func decodeExact(data []byte, v any) error {
 	return decodeExactValue(data, reflect.ValueOf(v).Elem())
 }
