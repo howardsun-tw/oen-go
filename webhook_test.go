@@ -574,6 +574,21 @@ func TestNonCardPaymentInfoKeepsDocumentedPaymentReferences(t *testing.T) {
 	noError(t, err)
 	equal(t, code, event.PaymentInfo.Code)
 	contains(t, string(event.RedactedPayload), `"code":"`+code+`"`)
+
+	// The exemption needs the documented ATM or CVS layout and no card
+	// method; a card number under the same key name is still masked.
+	for _, info := range []string{
+		`{"account":"4242424242424242"}`,
+		`{"code":"4242424242424242"}`,
+		`{"method":"card","bankCode":"812","account":"4242424242424242"}`,
+		`{"method":"applePay","cvsName":"7-11","code":"4242424242424242"}`,
+		`{"bankCode":"812","extra":{"account":"4242424242424242"}}`,
+		`{"bankCode":"812","account":{"number":"4242424242424242"}}`,
+	} {
+		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","paymentInfo":` + info + `}`))
+		noError(t, err)
+		notContains(t, string(event.RedactedPayload), "4242424242424242")
+	}
 }
 
 func TestParseWebhookReadsAnIssuedInvoice(t *testing.T) {

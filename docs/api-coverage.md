@@ -87,10 +87,12 @@ The Postman collection (published 2026-07-15) does not describe signatures.
   a card number printed in groups (`4242 4242 4242 4242` or with hyphens) is
   also reduced to its last four digits. Where the payload names no method,
   only an ungrouped Luhn-valid number is masked, so a grouped ATM `account`
-  stays whole. A nested method name never lifts that masking. The keys Oen
-  documents for non-card references (`account`, `bankCode`, `code`,
-  `cvsCode`) are never masked there: a virtual account or CVS payment code
-  can pass the Luhn check (2026-11-07).
+  stays whole. A nested method name never lifts that masking. In the ATM and
+  CVS layouts Oen documents, a scalar `account` beside `bankCode` or
+  `bankName`, and a scalar `code` or `cvsCode` beside `cvsName`, are not
+  masked there, because a virtual account or CVS payment code can pass the
+  Luhn check. An object that names a card method gets no such exemption
+  (2026-11-07).
 
 ## Payment API idempotency update (2026-10-20)
 

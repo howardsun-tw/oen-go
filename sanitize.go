@@ -101,8 +101,18 @@ func sanitizeNode(key string, value any, mask panMask) any {
 	case map[string]any:
 		clean := make(map[string]any, len(value))
 		context := paymentContextOf(value)
+		var exempt map[string]bool
+		if mask == panMaskUnknown {
+			exempt = nonCardReferenceKeys(value)
+		}
 		for childKey, childValue := range value {
 			childMask := mask
+			if exempt[normalizeKey(childKey)] {
+				switch childValue.(type) {
+				case string, json.Number:
+					childMask = panMaskOff
+				}
+			}
 			// Oen also places card data in a scalar paymentInfo field. Its
 			// meaning depends on siblings: a card payment or token binding
 			// always carries the card number, LINE Pay carries its own
@@ -128,12 +138,12 @@ func sanitizeNode(key string, value any, mask panMask) any {
 		}
 		return clean
 	case string:
-		if masksScalar(key, mask) && looksLikeCardNumber(value, mask == panMaskCard) {
+		if mask != panMaskOff && looksLikeCardNumber(value, mask == panMaskCard) {
 			return lastFour(value)
 		}
 		return value
 	case json.Number:
-		if masksScalar(key, mask) && looksLikeCardNumber(value.String(), false) {
+		if mask != panMaskOff && looksLikeCardNumber(value.String(), false) {
 			return lastFour(value.String())
 		}
 		return value
@@ -142,22 +152,29 @@ func sanitizeNode(key string, value any, mask panMask) any {
 	}
 }
 
-// masksScalar reports whether a scalar under key is checked for a card
-// number. Where the payload names no method, the keys Oen documents for
-// non-card payment references are exempt: an ATM virtual account or a CVS
-// payment code can pass the Luhn check, and the payer needs it whole. Any
-// other key, including an undocumented one beside them, is still checked.
-func masksScalar(key string, mask panMask) bool {
-	switch mask {
-	case panMaskOff:
-		return false
-	case panMaskUnknown:
-		switch normalizeKey(key) {
-		case "account", "bankcode", "code", "cvscode":
-			return false
-		}
+// nonCardReferenceKeys returns the normalized keys of object that hold a
+// non-card payment reference in the ATM or CVS layout Oen documents: account
+// beside bankCode or bankName, and code or cvsCode beside cvsName. A virtual
+// account or payment code can pass the Luhn check, and the payer needs it
+// whole. An object that names a card method gets no exemption, and nothing
+// below object is exempt.
+func nonCardReferenceKeys(object map[string]any) map[string]bool {
+	if paymentContextOf(object) == paymentContextCard {
+		return nil
 	}
-	return true
+	present := make(map[string]bool, len(object))
+	for key := range object {
+		present[normalizeKey(key)] = true
+	}
+	exempt := make(map[string]bool)
+	if present["bankcode"] || present["bankname"] {
+		exempt["account"] = true
+	}
+	if present["cvsname"] {
+		exempt["code"] = true
+		exempt["cvscode"] = true
+	}
+	return exempt
 }
 
 // paymentContext is what a payload says about its own payment method.
