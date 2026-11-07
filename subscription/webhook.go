@@ -224,11 +224,21 @@ func decodeEvent(payload []byte) (*Event, error) {
 		return nil, fmt.Errorf("%w: data: %v", ErrInvalidEvent, err)
 	}
 	if !isNull(data.Subscription) {
-		subscription, err := decodeSubscription(data.Subscription)
+		// Read only what EventSubscription exposes; envelope.Data is
+		// sanitized once below.
+		var fields resourceFields
+		if err := decodeObject(data.Subscription, &fields); err != nil {
+			return nil, fmt.Errorf("%w: data.subscription: %v", ErrInvalidEvent, err)
+		}
+		subscriptionID, err := optionalString("id", fields.ID)
 		if err != nil {
 			return nil, fmt.Errorf("%w: data.subscription: %v", ErrInvalidEvent, err)
 		}
-		event.Subscription = &EventSubscription{ID: subscription.ID, Status: subscription.Status}
+		status, err := optionalString("status", fields.Status)
+		if err != nil {
+			return nil, fmt.Errorf("%w: data.subscription: %v", ErrInvalidEvent, err)
+		}
+		event.Subscription = &EventSubscription{ID: subscriptionID, Status: Status(status)}
 	}
 	if !isNull(data.PaymentDetail) {
 		detail, err := decodePaymentDetail(data.PaymentDetail)

@@ -132,6 +132,19 @@ func TestSignedButMalformedEventsAreRejected(t *testing.T) {
 	}
 }
 
+// EventSubscription carries only id and status, so a field the event does not
+// expose, such as nextChargeAt in an unexpected format, must not reject an
+// authentic event.
+func TestEventSubscriptionIgnoresFieldsItDoesNotExpose(t *testing.T) {
+	ts := webhookNow.Unix()
+	body := `{"id":"evt_1","type":"subscription_renewed","created":1790000000,` +
+		`"data":{"subscription":{"id":"sub_1","status":"active","nextChargeAt":"2026/10/15"}}}`
+	event, err := verifier().Verify([]byte(body), headerFor(fmt.Sprintf("t=%d,v1=%s", ts, sign(testSecret, ts, body))))
+	noError(t, err)
+	equal(t, &EventSubscription{ID: "sub_1", Status: StatusActive}, event.Subscription)
+	contains(t, string(event.Data), `"nextChargeAt":"2026/10/15"`)
+}
+
 func TestUnknownEventTypesAndMissingDataPassThrough(t *testing.T) {
 	ts := webhookNow.Unix()
 	body := `{"id":"evt_2","type":"subscription_future_thing","created":1790000000}`
