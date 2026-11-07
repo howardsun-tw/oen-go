@@ -317,7 +317,7 @@ func decodeTransaction(resource json.RawMessage, loc *time.Location) (Transactio
 		return Transaction{}, fmt.Errorf("sanitize transaction: %w", err)
 	}
 	var wire wireTransaction
-	if err := json.Unmarshal(clean, &wire); err != nil {
+	if err := decodeExact(clean, &wire); err != nil {
 		return Transaction{}, fmt.Errorf("decode transaction: %w", err)
 	}
 	id := firstNonEmpty(rawString(wire.ID), rawString(wire.TransactionHID))
@@ -418,7 +418,7 @@ func decodeSubscription(resource json.RawMessage, loc *time.Location, requireAmo
 		return Subscription{}, fmt.Errorf("sanitize subscription: %w", err)
 	}
 	var wire wireSubscription
-	if err := json.Unmarshal(clean, &wire); err != nil {
+	if err := decodeExact(clean, &wire); err != nil {
 		return Subscription{}, fmt.Errorf("decode subscription: %w", err)
 	}
 	id := rawString(wire.ID)
@@ -512,7 +512,7 @@ func decodePaymentInfo(raw json.RawMessage, loc *time.Location) (PaymentInfo, er
 		return info, nil
 	}
 	var wire wirePaymentInfo
-	if err := json.Unmarshal(raw, &wire); err != nil {
+	if err := decodeExact(raw, &wire); err != nil {
 		return PaymentInfo{}, fmt.Errorf("decode paymentInfo: %w", err)
 	}
 	expiredAt, err := optionalTime(wire.ExpiredAt, loc)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -207,4 +208,63 @@ func idPathSegment(op, field, name, value string) (string, error) {
 		return "", newValidationError(op, field, name+" has surrounding whitespace")
 	}
 	return pathSegment(op, field, name, value)
+}
+
+// decodeExact decodes a JSON object into the struct v points to, reading
+// each field only from the key its json tag names exactly. encoding/json
+// also accepts a key that differs only in case, and the last such key wins,
+// so {"orderId":"A","orderid":"B"} would decode as "B". Nested structs,
+// pointers to structs and slices of structs follow the same rule. JSON null
+// leaves v unchanged, as encoding/json does.
+func decodeExact(data []byte, v any) error {
+	return decodeExactValue(data, reflect.ValueOf(v).Elem())
+}
+
+func decodeExactValue(data []byte, target reflect.Value) error {
+	switch target.Kind() {
+	case reflect.Struct:
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(data, &object); err != nil {
+			return err
+		}
+		fields := target.Type()
+		for i := 0; i < fields.NumField(); i++ {
+			name, _, _ := strings.Cut(fields.Field(i).Tag.Get("json"), ",")
+			raw, ok := object[name]
+			if name == "" || name == "-" || !ok {
+				continue
+			}
+			if err := decodeExactValue(raw, target.Field(i)); err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+		}
+		return nil
+	case reflect.Pointer:
+		if target.Type().Elem().Kind() != reflect.Struct || isNullRaw(data) {
+			break
+		}
+		value := reflect.New(target.Type().Elem())
+		if err := decodeExactValue(data, value.Elem()); err != nil {
+			return err
+		}
+		target.Set(value)
+		return nil
+	case reflect.Slice:
+		if target.Type().Elem().Kind() != reflect.Struct || isNullRaw(data) {
+			break
+		}
+		var elements []json.RawMessage
+		if err := json.Unmarshal(data, &elements); err != nil {
+			return err
+		}
+		slice := reflect.MakeSlice(target.Type(), len(elements), len(elements))
+		for i, element := range elements {
+			if err := decodeExactValue(element, slice.Index(i)); err != nil {
+				return fmt.Errorf("[%d]: %w", i, err)
+			}
+		}
+		target.Set(slice)
+		return nil
+	}
+	return json.Unmarshal(data, target.Addr().Interface())
 }

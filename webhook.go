@@ -530,7 +530,7 @@ func (c *Client) ParseWebhook(raw []byte) (*WebhookEvent, error) {
 		return event, nil
 	}
 	var clean wireWebhook
-	if err := json.Unmarshal(redacted, &clean); err != nil {
+	if err := decodeExact(redacted, &clean); err != nil {
 		return nil, invalidWebhookField("payload", "cannot decode sanitized callback")
 	}
 	event.OrderID = rawString(clean.OrderID)

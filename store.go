@@ -123,7 +123,7 @@ func decodeStoreSubscriptionPage(data json.RawMessage, loc *time.Location) (*Sto
 		Subscriptions json.RawMessage `json:"subscriptions"`
 		Page          json.RawMessage `json:"page"`
 	}
-	if err := json.Unmarshal(data, &wire); err != nil {
+	if err := decodeExact(data, &wire); err != nil {
 		return nil, fmt.Errorf("decode store subscription list: %w", err)
 	}
 	if isNullRaw(wire.Subscriptions) {
@@ -170,7 +170,7 @@ func decodeStoreSubscription(resource json.RawMessage, loc *time.Location) (Stor
 		CancelledAt json.RawMessage `json:"cancelledAt"`
 		EndedAt     json.RawMessage `json:"endedAt"`
 	}
-	if err := json.Unmarshal(clean, &wire); err != nil {
+	if err := decodeExact(clean, &wire); err != nil {
 		return StoreSubscription{}, fmt.Errorf("decode: %w", err)
 	}
 	subscription := StoreSubscription{

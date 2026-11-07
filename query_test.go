@@ -69,6 +69,21 @@ func TestGetTransactionKeepsNonCardPaymentReferences(t *testing.T) {
 	contains(t, string(cvs.RedactedPayload), `"code":"`+code+`"`)
 }
 
+// A key that differs from the documented one only in case must not replace
+// it, at the top level or inside paymentInfo.
+func TestTransactionFieldsAreReadByTheirDocumentedKeyOnly(t *testing.T) {
+	server, client := newFake(t)
+	server.Success("/transactions/{id}", map[string]any{
+		"id": "P20260928AB12CD34", "amount": 1000, "Amount": "bad", "orderId": "A", "orderid": "B",
+		"paymentInfo": map[string]any{"method": "atm", "bankCode": "812", "BankCode": "999"},
+	})
+	transaction, err := client.GetTransaction(context.Background(), "P20260928AB12CD34")
+	noError(t, err)
+	equal(t, Amount(1000), transaction.Amount)
+	equal(t, "A", transaction.OrderID)
+	equal(t, "812", transaction.PaymentInfo.BankCode)
+}
+
 // Identifiers come from the provider and from callers; a slash in one must
 // not be able to reach a different endpoint.
 func TestGetTransactionEscapesTheIdentifier(t *testing.T) {
