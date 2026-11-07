@@ -17,7 +17,12 @@ Checked against [the official text export](https://developer.oen.tw/llms-full.tx
   Transaction and subscription IDs with surrounding whitespace are refused
   too, because their documented format is alphanumeric. `orderId` is still
   sent as given. A hosted page `id` of `.` or `..`, which would change the
-  redirect path, is an unknown outcome.
+  redirect path, is an unknown outcome, and so is a `ChargeToken` `id` or a
+  `SubscribeToken` `subscriptionId` of `.` or `..`, which no later call
+  could query or refund.
+- Only the exact `paymentMethod` key beside `paymentInfo` can mark a payment
+  as non-card and lift card number masking. A `method` key or any other
+  spelling there can only mark a card payment.
 - A Subscription API event reads only `id` and `status` from
   `data.subscription`, so a field the event does not expose cannot reject it.
 
@@ -107,11 +112,13 @@ The Postman collection (published 2026-07-15) does not describe signatures.
   also reduced to its last four digits. Where the payload names no method,
   only an ungrouped Luhn-valid number is masked, so a grouped ATM `account`
   stays whole. A nested method name never lifts that masking. In the ATM and
-  CVS layouts Oen documents, a scalar `account` beside `bankCode` or
-  `bankName`, and a scalar `code` or `cvsCode` beside `cvsName`, are not
-  masked there, because a virtual account or CVS payment code can pass the
-  Luhn check. An object that names a card method gets no such exemption
-  (2026-11-07).
+  CVS layouts Oen documents, a scalar `account` beside a non-empty string
+  `bankCode` or `bankName`, and a scalar `code` or `cvsCode` beside a
+  non-empty string `cvsName`, are not masked there, because a virtual
+  account or CVS payment code can pass the Luhn check. Only these exact key
+  spellings qualify. An object that names a card method, or that carries a
+  card field (`cardNum`, `cardType`, `cardName`, `pan` or another card
+  number key, in any spelling), gets no such exemption (2026-11-07).
 
 ## Payment API idempotency update (2026-10-20)
 

@@ -178,8 +178,11 @@ func isNonCardReference(object map[string]any, key string) bool {
 // can only keep masking on.
 func hasCardFields(object map[string]any) bool {
 	for key := range object {
+		if isCardNumberKey(key) {
+			return true
+		}
 		switch normalizeKey(key) {
-		case "cardnum", "cardnumber", "cardtype", "cardname":
+		case "cardtype", "cardname":
 			return true
 		}
 	}
@@ -218,13 +221,13 @@ func paymentContextOf(object map[string]any) paymentContext {
 			}
 		case "paymentmethod", "method":
 			// Apple Pay settles on a card, so its paymentInfo is card data.
-			// Any spelling of the key may push toward masking, but only the
-			// documented key, the one the typed fields read, may say the
-			// payment is not a card.
+			// Any spelling of either key may push toward masking, but only
+			// paymentMethod, the key the typed fields read beside
+			// paymentInfo, may say the payment is not a card.
 			if strings.EqualFold(text, string(MethodCard)) || strings.EqualFold(text, string(MethodApplePay)) {
 				return paymentContextCard
 			}
-			if text != "" && (key == "paymentMethod" || key == "method") {
+			if text != "" && key == "paymentMethod" {
 				context = paymentContextOther
 			}
 		}

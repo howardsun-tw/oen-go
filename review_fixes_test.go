@@ -24,6 +24,8 @@ func TestScalarPaymentInfoIsMaskedUnlessTheMethodIsKnownToBeNotACard(t *testing.
 		`{"paymentInfo":{"number":"4242424242424242"}}`,
 		`{"paymentMethod":"card","paymentInfo":["4242424242424242"]}`,
 		`{"paymentInfo":4242424242424242}`,
+		// Only paymentMethod names the method beside paymentInfo.
+		`{"method":"atm","paymentInfo":"4242424242424242"}`,
 	}
 	for _, raw := range masked {
 		clean, err := SanitizeJSON([]byte(raw))
@@ -36,7 +38,6 @@ func TestScalarPaymentInfoIsMaskedUnlessTheMethodIsKnownToBeNotACard(t *testing.
 	// preserved: LINE Pay ids and other references are what the caller needs.
 	for _, raw := range []string{
 		`{"paymentMethod":"linePay","paymentInfo":"4242424242424242"}`,
-		`{"method":"atm","paymentInfo":"4242424242424242"}`,
 		`{"paymentInfo":"2024041200112233"}`,
 		`{"paymentInfo":"LP-2024-0412"}`,
 	} {
