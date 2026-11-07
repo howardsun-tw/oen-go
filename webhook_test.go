@@ -584,6 +584,8 @@ func TestNonCardPaymentInfoKeepsDocumentedPaymentReferences(t *testing.T) {
 		`{"method":"applePay","cvsName":"7-11","code":"4242424242424242"}`,
 		`{"bankCode":"812","extra":{"account":"4242424242424242"}}`,
 		`{"bankCode":"812","account":{"number":"4242424242424242"}}`,
+		`{"bankCode":"812","account":"x","ACCOUNT":"4242424242424242"}`,
+		`{"cvsName":"7-11","cvs_code":"4242424242424242"}`,
 	} {
 		event, err := client.ParseWebhook([]byte(`{"purpose":"charge","merchantId":"ming","id":"tx","paymentInfo":` + info + `}`))
 		noError(t, err)

@@ -102,12 +102,12 @@ func sanitizeNode(key string, value any, mask panMask) any {
 		clean := make(map[string]any, len(value))
 		context := paymentContextOf(value)
 		var exempt map[string]bool
-		if mask == panMaskUnknown {
+		if mask == panMaskUnknown && context != paymentContextCard {
 			exempt = nonCardReferenceKeys(value)
 		}
 		for childKey, childValue := range value {
 			childMask := mask
-			if exempt[normalizeKey(childKey)] {
+			if exempt[childKey] {
 				switch childValue.(type) {
 				case string, json.Number:
 					childMask = panMaskOff
@@ -152,27 +152,26 @@ func sanitizeNode(key string, value any, mask panMask) any {
 	}
 }
 
-// nonCardReferenceKeys returns the normalized keys of object that hold a
-// non-card payment reference in the ATM or CVS layout Oen documents: account
-// beside bankCode or bankName, and code or cvsCode beside cvsName. A virtual
+// nonCardReferenceKeys returns the keys of object that hold a non-card
+// payment reference in the ATM or CVS layout Oen documents: account beside
+// bankCode or bankName, and code or cvsCode beside cvsName. A virtual
 // account or payment code can pass the Luhn check, and the payer needs it
-// whole. An object that names a card method gets no exemption, and nothing
-// below object is exempt.
+// whole. Only the exact documented keys qualify, since a case or separator
+// variant is not decoded and would otherwise keep a card number in
+// RedactedPayload. The caller skips objects that name a card method, and
+// nothing below object is exempt.
 func nonCardReferenceKeys(object map[string]any) map[string]bool {
-	if paymentContextOf(object) == paymentContextCard {
-		return nil
+	has := func(key string) bool { _, ok := object[key]; return ok }
+	var exempt map[string]bool
+	if has("bankCode") || has("bankName") {
+		exempt = map[string]bool{"account": true}
 	}
-	present := make(map[string]bool, len(object))
-	for key := range object {
-		present[normalizeKey(key)] = true
-	}
-	exempt := make(map[string]bool)
-	if present["bankcode"] || present["bankname"] {
-		exempt["account"] = true
-	}
-	if present["cvsname"] {
+	if has("cvsName") {
+		if exempt == nil {
+			exempt = make(map[string]bool, 2)
+		}
 		exempt["code"] = true
-		exempt["cvscode"] = true
+		exempt["cvsCode"] = true
 	}
 	return exempt
 }
