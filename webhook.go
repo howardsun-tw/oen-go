@@ -2,7 +2,6 @@ package oen
 
 import (
 	"bytes"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +14,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
 // The acknowledgement Oen expects. Oen delivers a notification at most three
@@ -279,8 +280,11 @@ func (e *WebhookEvent) TokenBound() bool {
 
 // ChargeSucceeded reports a payment Oen says went through. It is still the
 // provider's claim, not a verified fact; see [WebhookEvent.Verified].
+//
+// An authorized charge is not one: Oen documents success as true for every
+// final status other than failed, and authorized as approved but not captured.
 func (e *WebhookEvent) ChargeSucceeded() bool {
-	return e.Purpose == PurposeCharge && e.HasOutcome && e.Success
+	return e.Purpose == PurposeCharge && e.HasOutcome && e.Success && e.Status != StatusAuthorized
 }
 
 type wireWebhook struct {
@@ -382,54 +386,10 @@ func (c *Client) VerifyWebhookSignature(raw []byte, signature string) error {
 	if c.cfg.WebhookSecret == "" {
 		return newValidationError(op, "webhookSecret", "webhook secret is not configured")
 	}
-	invalid := func(message string) error {
-		return &Error{Op: op, Kind: KindInvalidSignature, Err: errors.New(message)}
+	if problem := httpx.CheckWebhookSignature(c.cfg.WebhookSecret, raw, signature, c.cfg.Now(), c.cfg.WebhookTolerance); problem != "" {
+		return &Error{Op: op, Kind: KindInvalidSignature, Err: errors.New(problem)}
 	}
-
-	var timestamp string
-	var signatures [][]byte
-	for _, part := range strings.Split(signature, ",") {
-		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			continue
-		}
-		switch key {
-		case "t":
-			if timestamp != "" {
-				return invalid("more than one timestamp")
-			}
-			timestamp = value
-		case "v1":
-			decoded, err := hex.DecodeString(value)
-			if err == nil && len(decoded) == sha256.Size {
-				signatures = append(signatures, decoded)
-			}
-		}
-	}
-	seconds, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil || timestamp == "" || timestamp[0] == '-' || timestamp[0] == '+' {
-		return invalid("missing or malformed timestamp")
-	}
-	if len(signatures) == 0 {
-		return invalid("no v1 signature")
-	}
-	tolerance := c.cfg.WebhookTolerance
-	age := c.cfg.Now().Sub(time.Unix(seconds, 0))
-	if age > tolerance || age < -tolerance {
-		return invalid(fmt.Sprintf("timestamp is outside the %s tolerance", tolerance))
-	}
-
-	mac := hmac.New(sha256.New, []byte(c.cfg.WebhookSecret))
-	mac.Write([]byte(timestamp))
-	mac.Write([]byte("."))
-	mac.Write(raw)
-	expected := mac.Sum(nil)
-	for _, candidate := range signatures {
-		if hmac.Equal(candidate, expected) {
-			return nil
-		}
-	}
-	return invalid("no signature matches the body")
+	return nil
 }
 
 // ParseWebhook reads one Oen callback body.
@@ -595,6 +555,12 @@ func (c *Client) ParseWebhook(raw []byte) (*WebhookEvent, error) {
 	event.Currency = rawString(clean.Currency)
 	event.Customer = Customer{ID: rawString(clean.UserID), Name: rawString(clean.UserName), Email: rawString(clean.UserEmail)}
 	event.PaymentMethod = PaymentMethod(rawString(clean.PaymentMethod))
+	// As on a transaction, the documented paymentMethod outranks the guess
+	// decodePaymentInfo makes, and it names the method of a scalar
+	// paymentInfo, which carries none.
+	if event.PaymentMethod != "" {
+		paymentInfo.Method = event.PaymentMethod
+	}
 	event.PaymentInfo = paymentInfo
 	event.AuthCode = rawString(clean.AuthCode)
 	event.Items = items

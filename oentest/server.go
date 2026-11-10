@@ -36,6 +36,8 @@ const (
 
 // Response is one queued fake response. A non-nil Body is written verbatim;
 // otherwise the fake writes an Oen envelope built from Code, Message and Data.
+// An empty Code becomes S0000 only with a 2xx status; with any other status
+// the envelope carries no code.
 type Response struct {
 	StatusCode int
 	Code       string
@@ -85,11 +87,14 @@ type Server struct {
 	nextPageToken  string
 	rejectBadToken bool
 
-	chargeCount         int
-	requests            []Request
-	responses           map[string][]Response
-	blocked             map[string]bool
-	transactionsByID    map[string]map[string]any
+	chargeCount      int
+	requests         []Request
+	responses        map[string][]Response
+	blocked          map[string]bool
+	transactionsByID map[string]map[string]any
+	// transactionHIDs lists the keys of transactionsByID oldest first, so the
+	// transaction list has a stable order.
+	transactionHIDs     []string
 	transactionsByOrder map[string][]map[string]any
 	subscriptions       map[string]map[string]any
 
@@ -152,7 +157,7 @@ func (s *Server) Reject(endpoint, code, message string) {
 
 // FailHTTP queues an HTTP failure with no body.
 func (s *Server) FailHTTP(endpoint string, status int) {
-	// Body must be non-nil so writeResponse does not invent an S0000 envelope.
+	// Body must be non-nil so writeResponse writes no envelope at all.
 	s.QueueResponse(endpoint, Response{StatusCode: status, Body: []byte{}})
 }
 
@@ -172,6 +177,10 @@ func (s *Server) ChargeThenFail(endpoint string, status int) {
 // counts as gone; Go's http.Transport never does. The connection is dropped
 // without writing a response, so a client waiting past its timeout sees a
 // transport failure rather than an empty HTTP 200.
+//
+// The request is recorded, but nothing is charged, refunded or cancelled.
+// Queue Response{RecordCharge: true, Block: true} for a request that applied
+// and then hung.
 func (s *Server) Hang(endpoint string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -231,27 +240,32 @@ func (s *Server) Requests() []Request {
 	return requests
 }
 
-// Count returns how many requests an endpoint received.
+// Count returns how many requests an endpoint received. The endpoint takes
+// the forms QueueResponse accepts; a path counts every request on its route,
+// and a method-qualified one only the requests with that method.
 func (s *Server) Count(endpoint string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := routeKey(normalizePath(endpoint))
+	method, path := splitEndpoint(endpoint)
+	key := routeKey(normalizePath(path))
 	count := 0
 	for _, request := range s.requests {
-		if routeKey(request.Path) == key {
+		if routeKey(request.Path) == key && (method == "" || request.Method == method) {
 			count++
 		}
 	}
 	return count
 }
 
-// LastRequest returns the most recent request for an endpoint.
+// LastRequest returns the most recent request for an endpoint, which takes
+// the same forms as in Count.
 func (s *Server) LastRequest(endpoint string) Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := routeKey(normalizePath(endpoint))
+	method, path := splitEndpoint(endpoint)
+	key := routeKey(normalizePath(path))
 	for _, v := range slices.Backward(s.requests) {
-		if routeKey(v.Path) == key {
+		if routeKey(v.Path) == key && (method == "" || v.Method == method) {
 			return cloneRequest(v)
 		}
 	}
@@ -280,14 +294,18 @@ func (s *Server) serve(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	response, queued := s.nextResponse(request.Method, path)
-	if !queued {
-		response = s.defaultResponse(request.Method, path, body)
-	} else if response.RecordCharge {
+	blocked := response.Block || s.isBlocked(request.Method, path)
+	switch {
+	case queued && response.RecordCharge:
 		// Record the charge, then throw its envelope away: the caller gets the
 		// queued failure while the transaction stays findable by order.
 		_ = s.defaultResponse(request.Method, path, body)
+	case !queued && !blocked:
+		// The default handler changes state, so a hung endpoint must not run
+		// it: RecordCharge is the only way to apply a request and hide it.
+		response = s.defaultResponse(request.Method, path, body)
 	}
-	if response.Block || s.isBlocked(request.Method, path) {
+	if blocked {
 		s.hang(writer, request)
 		return
 	}
@@ -399,7 +417,9 @@ func (s *Server) defaultResponse(method, path string, body []byte) Response {
 		_ = json.Unmarshal(body, &request)
 		return s.subscriptionResponse(strings.TrimPrefix(path, "/subscriptions/"), true, request.Reason)
 	default:
-		return Response{StatusCode: http.StatusNotFound}
+		// Oen answers an unknown path with 404 and a plain-text body, not an
+		// envelope.
+		return Response{StatusCode: http.StatusNotFound, Body: []byte("Not Found")}
 	}
 }
 
@@ -453,6 +473,7 @@ func (s *Server) recordCharge(body []byte, action, subscriptionID string) (hid, 
 		transaction["period"] = 1
 	}
 	s.transactionsByID[hid] = cloneMap(transaction)
+	s.transactionHIDs = append(s.transactionHIDs, hid)
 	s.transactionsByOrder[request.OrderID] = append(s.transactionsByOrder[request.OrderID], cloneMap(transaction))
 	return hid, transactionID, s.authCode
 }
@@ -566,12 +587,13 @@ func (s *Server) orderTransactions(orderID string) []map[string]any {
 	return transactions
 }
 
+// allTransactions lists every transaction newest first, as Oen does.
 func (s *Server) allTransactions() []map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	transactions := make([]map[string]any, 0, len(s.transactionsByID))
-	for _, transaction := range s.transactionsByID {
-		transactions = append(transactions, cloneMap(transaction))
+	transactions := make([]map[string]any, 0, len(s.transactionHIDs))
+	for _, hid := range slices.Backward(s.transactionHIDs) {
+		transactions = append(transactions, cloneMap(s.transactionsByID[hid]))
 	}
 	return transactions
 }
@@ -602,11 +624,15 @@ func (s *Server) writeResponse(writer http.ResponseWriter, response Response) {
 		_, _ = writer.Write(response.Body)
 		return
 	}
-	code := response.Code
-	if code == "" {
-		code = successCode
+	envelope := map[string]any{"message": response.Message}
+	switch {
+	case response.Code != "":
+		envelope["code"] = response.Code
+	case status < http.StatusMultipleChoices:
+		// Only a 2xx status defaults to success. A failure status that names
+		// no code must not arrive looking like an S0000 envelope.
+		envelope["code"] = successCode
 	}
-	envelope := map[string]any{"code": code, "message": response.Message}
 	if response.Data != nil {
 		envelope["data"] = response.Data
 	}
@@ -623,11 +649,21 @@ func lookupKeys(method, path string) []string {
 }
 
 func normalizeKey(endpoint string) string {
-	method, path, found := strings.Cut(endpoint, " ")
-	if found {
-		return strings.ToUpper(method) + " " + normalizePath(path)
+	method, path := splitEndpoint(endpoint)
+	if method != "" {
+		return method + " " + normalizePath(path)
 	}
-	return normalizePath(endpoint)
+	return normalizePath(path)
+}
+
+// splitEndpoint separates the optional method of "PUT /subscriptions/{id}"
+// from its path. A path that itself contains a space has no method.
+func splitEndpoint(endpoint string) (method, path string) {
+	before, after, found := strings.Cut(endpoint, " ")
+	if !found || strings.HasPrefix(before, "/") {
+		return "", endpoint
+	}
+	return strings.ToUpper(before), after
 }
 
 func normalizePath(endpoint string) string {

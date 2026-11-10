@@ -1,8 +1,12 @@
-// Package httpx holds the transport rules shared by the Payment API client
-// (package oen) and the Subscription API client (package subscription).
+// Package httpx holds the transport and webhook signature rules shared by the
+// Payment API client (package oen) and the Subscription API client (package
+// subscription).
 package httpx
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -108,6 +112,58 @@ func PrintableASCII(value string) bool {
 		}
 	}
 	return true
+}
+
+// CheckWebhookSignature checks an OenPay-Signature value,
+// "t=<unix seconds>,v1=<hex>[,v1=<hex>]", against the raw body. Both APIs sign
+// "<t>.<body>" with HMAC-SHA256 under the signing secret; t must be within
+// tolerance of now in either direction, and any matching v1 passes. It returns
+// a problem description, or "" when the signature is valid. The caller must
+// refuse an empty secret first: anyone can compute a signature under it.
+func CheckWebhookSignature(secret string, payload []byte, signature string, now time.Time, tolerance time.Duration) string {
+	var timestamp string
+	var signatures [][]byte
+	for _, part := range strings.Split(signature, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "t":
+			if timestamp != "" {
+				return "more than one timestamp"
+			}
+			timestamp = value
+		case "v1":
+			decoded, err := hex.DecodeString(value)
+			if err == nil && len(decoded) == sha256.Size {
+				signatures = append(signatures, decoded)
+			}
+		}
+	}
+	seconds, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || timestamp == "" || timestamp[0] == '-' || timestamp[0] == '+' {
+		return "missing or malformed timestamp"
+	}
+	if len(signatures) == 0 {
+		return "no v1 signature"
+	}
+	age := now.Sub(time.Unix(seconds, 0))
+	if age > tolerance || age < -tolerance {
+		return fmt.Sprintf("timestamp is outside the %s tolerance", tolerance)
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(payload)
+	expected := mac.Sum(nil)
+	for _, candidate := range signatures {
+		if hmac.Equal(candidate, expected) {
+			return ""
+		}
+	}
+	return "no signature matches the body"
 }
 
 // HasControlChars reports a byte net/http refuses in a header value. Such a

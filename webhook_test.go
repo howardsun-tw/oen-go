@@ -445,6 +445,29 @@ func TestUnknownPurposesParseWithCommonFields(t *testing.T) {
 	errIs(t, err, ErrInvalidRequest)
 }
 
+// Oen documents success as true for every final status other than failed, and
+// authorized as approved but not captured. Such a callback must not read as a
+// payment that went through. Oen publishes no authorized example, so the body
+// follows the charge field table.
+func TestAuthorizedChargeIsNotASucceededCharge(t *testing.T) {
+	_, client := newFake(t)
+	for _, test := range []struct {
+		status    TransactionStatus
+		succeeded bool
+	}{
+		{StatusAuthorized, false},
+		{StatusCharged, true},
+		{StatusClaimed, true},
+	} {
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,"status":"` + string(test.status) + `"}`))
+		noError(t, err)
+		equal(t, test.status, event.Status)
+		isTrue(t, event.HasOutcome)
+		isTrue(t, event.Success)
+		equal(t, test.succeeded, event.ChargeSucceeded(), string(test.status))
+	}
+}
+
 // The examples below are Oen's own, from the webhook object page. Their event
 // IDs were computed with Node.js 24 from the documented formula.
 func TestChargeInProgressHasNoOutcome(t *testing.T) {

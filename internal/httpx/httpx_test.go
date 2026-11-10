@@ -1,6 +1,9 @@
 package httpx
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +112,41 @@ func TestHeaderChecksMatchWhatNetHTTPSends(t *testing.T) {
 	for value, want := range map[string]bool{"sub_sk_abc": true, "a b~": true, "a\tb": false, "tök": false, "a\x7f": false} {
 		if got := PrintableASCII(value); got != want {
 			t.Fatalf("PrintableASCII(%q) = %v", value, got)
+		}
+	}
+}
+
+func TestCheckWebhookSignature(t *testing.T) {
+	const secret = "pay_whsec_0123456789abcdef"
+	now := time.Unix(1790000000, 0)
+	body := []byte(`{"purpose":"charge"}`)
+	sign := func(key, timestamp string, payload []byte) string {
+		mac := hmac.New(sha256.New, []byte(key))
+		mac.Write([]byte(timestamp + "."))
+		mac.Write(payload)
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	good := sign(secret, "1790000000", body)
+	rotated := sign("pay_whsec_old", "1790000000", body)
+
+	for name, test := range map[string]struct{ signature, want string }{
+		"valid":                {"t=1790000000,v1=" + good, ""},
+		"spaces around parts":  {" t=1790000000 , v1=" + good, ""},
+		"second v1 matches":    {"t=1790000000,v1=" + rotated + ",v1=" + good, ""},
+		"edge of tolerance":    {"t=1789999700,v1=" + sign(secret, "1789999700", body), ""},
+		"empty":                {"", "missing or malformed timestamp"},
+		"signed timestamp":     {"t=+1790000000,v1=" + good, "missing or malformed timestamp"},
+		"two timestamps":       {"t=1790000000,t=1790000001,v1=" + good, "more than one timestamp"},
+		"no v1":                {"t=1790000000,v0=" + good, "no v1 signature"},
+		"short v1":             {"t=1790000000,v1=" + good[:32], "no v1 signature"},
+		"too old":              {"t=1789999699,v1=" + sign(secret, "1789999699", body), "timestamp is outside the 5m0s tolerance"},
+		"too new":              {"t=1790000301,v1=" + sign(secret, "1790000301", body), "timestamp is outside the 5m0s tolerance"},
+		"another secret":       {"t=1790000000,v1=" + rotated, "no signature matches the body"},
+		"another body":         {"t=1790000000,v1=" + sign(secret, "1790000000", []byte(`{}`)), "no signature matches the body"},
+		"timestamp not signed": {"t=1790000001,v1=" + good, "no signature matches the body"},
+	} {
+		if got := CheckWebhookSignature(secret, body, test.signature, now, 5*time.Minute); got != test.want {
+			t.Fatalf("%s: want %q, got %q", name, test.want, got)
 		}
 	}
 }

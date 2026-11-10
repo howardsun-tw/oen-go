@@ -2,6 +2,73 @@
 
 What this SDK implements, measured against Oen's own documentation.
 
+## Review fixes (2026-11-10)
+
+Checked against [the official text export](https://developer.oen.tw/llms-full.txt),
+retrieved 2026-11-10.
+
+- `PaymentInfo.Code` is also read from `cvsCode`. The Transaction object
+  carries the CVS payment code under that key; only a webhook uses `code`.
+- `WebhookEvent.PaymentInfo.Method` follows `paymentMethod` when the
+  notification has one, as `Transaction.PaymentInfo.Method` already did. A
+  card notification's `paymentInfo` is a bare string that names no method.
+- `ListTransactions` refuses a lone `Start` or `End` locally. Oen requires
+  both or neither and answers a lone one with HTTP 500 `F0001`
+  (`Invalid date`), which the SDK would report as `ErrUnknownOutcome`.
+- `oentest`: `Hang` no longer runs the endpoint's default handler, so a hung
+  charge, refund or cancellation applies nothing; queue
+  `Response{RecordCharge: true, Block: true}` for one that applied. A response
+  with a non-2xx status and no `Code` no longer carries `S0000`
+  (`ChargeThenFail`, a bare `Response{StatusCode: …}`), and an unknown path
+  answers 404 with a plain-text body, as Oen does. `Count` and `LastRequest`
+  accept the method-qualified form (`"PUT /subscriptions/{subscriptionId}"`).
+  `GET /transactions` lists newest first instead of in map order.
+- `SubscriptionStatus` gains `initiated`, `processing`, `scheduled` and
+  `retryScheduled`, which the current reference lists and the Postman
+  collection does not. `IsActive()` is now true for `scheduled` and
+  `retryScheduled` as well: Oen still charges both. `waiting`, which only the
+  Postman collection lists, stays known and active.
+- `TransactionStatus` gains `authorized`, `cancelled` and `refunding`, from
+  the current reference alone; none was observed.
+  - `authorized` (approved, not captured, under Oen's review) is pending.
+    `ChargeSucceeded()` is false for it: Oen documents `success` as true for
+    every final status other than `failed`, so the flag alone would report an
+    uncaptured payment as paid. Oen publishes no `authorized` callback
+    example.
+  - `cancelled` (an unpaid CVS code that was cancelled) is failed.
+  - `refunding` (a refund waiting for its transfer) is known and answers false
+    to `IsPaid` and `IsRefunded`.
+
+Observed on the testing environment on 2026-11-10, with one subscription
+created through `POST /checkout-schedule` and a first charge in the future:
+
+| Step | Oen's answer |
+| --- | --- |
+| `GET /subscriptions/:id` before the card was bound | `status: initiated`, with `amount` |
+| The same query after the card was bound | `status: scheduled`, with `amount` |
+| `PUT /subscriptions/:id` | `status: cancelled`, without `amount` |
+| The same query after cancelling | `status: cancelled`, with `amount` |
+| `PUT` on an `initiated` or a `cancelled` subscription | HTTP 400 `V0002` (`INVALID_STATUS`) |
+| `GET /transactions` with only `start`, or only `end` | HTTP 500 `F0001` (`Invalid date`) |
+| An unknown path | HTTP 404 with the plain-text body `Not Found` |
+
+No answer carried `nextChargeAt`. `waiting` did not appear, which does not
+show that Oen never sends it. `processing`, `retryScheduled`, every
+transaction status other than `charged`, and the `cvsCode` key rest on the
+reference alone.
+
+Found in the same check and not changed:
+
+- The Subscription object now marks `amount` 可能沒有, and `GetSubscription`
+  still requires it. Every query above carried `amount`, so the rule is kept
+  until a query without it is seen.
+- The three hosted purchase pages now document `invoiceInfo`, `POST /checkout`
+  also `strictPaymentMethods`, both token endpoints `userPhone`, and there is
+  a change-card page endpoint
+  (`POST /subscriptions/:subscriptionHid/change-card-checkout`). None is
+  implemented; the request table below lists what the SDK sends, not every
+  field Oen accepts.
+
 ## Review fixes (2026-11-07)
 
 Checked against [the official text export](https://developer.oen.tw/llms-full.txt).
@@ -221,9 +288,10 @@ acceptance of those official responses.
 The resource table says subscription `amount` is required, but the official
 `PUT /subscriptions/:subscriptionId` success example omits it. The SDK follows
 the endpoint's concrete example for cancellation and reports `HasAmount=false`;
-subscription queries still require amount. This documentation conflict should
-be clarified with Oen rather than replacing the omitted value with an assumed
-known amount.
+subscription queries still require amount. The testing environment agreed on
+2026-11-10: the `PUT` answer omitted `amount` and every `GET` carried it, as
+recorded under "Review fixes (2026-11-10)". The SDK does not replace the
+omitted value with an assumed known amount.
 
 ## Request fields
 
@@ -278,7 +346,7 @@ own responses and sending an empty string is not the same as sending nothing.
   | `token` | `merchantId`, `id`, `success` |
   | `schedule_subscription` | `merchantId`, `id`, `success`, `subscriptionId` |
   | `subscription_card_changed` | `merchantId`, `id`, `success`, `status`, `subscriptionId` |
-  | `invoice_issued`, `invoice_voided` | `merchantId`, `id`, `chargeId`, `invoiceNumber`, `invoiceStatus` |
+  | `invoice_issued`, `invoice_voided` | `merchantId`, `id`, `chargeId`, `invoiceNumber`, `invoiceStatus`, `invoiceDate`, `randomNumber`, `createdAt`, and `invoiceAmount` (present, may be `null`) |
   | `refund`, `subscription_cancelled`, `subscription_retry` | `id` |
   | unknown | nothing beyond `purpose` |
 
@@ -343,7 +411,9 @@ These provider behaviors remain unverified:
   back". Oen documents 50 rows per page and states that offset paging is not
   available; the token in its example decodes to a DynamoDB key with a limit
   of 100, so the page size is not something to depend on.
-- `start` and `end` on the transaction list: named in the URL, never described.
+- `start` and `end` on the transaction list. Oen documents them as Taipei-time
+  dates (`2026-09-01`) or Unix millisecond timestamps that must be sent
+  together; the SDK checks only that both or neither is set.
 - Whether Oen ever answers HTTP 429. The rate-limit handling is defensive.
 - Webhook signatures and event IDs. The tests use Oen's documented algorithm
   and its sample notification, with the event ID computed by `openssl` and

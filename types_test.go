@@ -31,6 +31,12 @@ func TestTransactionStatusClassification(t *testing.T) {
 		{status: StatusFailed, known: true, failed: true},
 		{status: StatusRefunded, known: true, refunded: true},
 		{status: StatusRefundedPostPayout, known: true, refunded: true},
+		// Approved but not captured: Oen still has to review it.
+		{status: "authorized", known: true, pending: true},
+		// An unpaid CVS code that was cancelled: no money moved.
+		{status: "cancelled", known: true, failed: true},
+		// A refund waiting for its transfer is neither kept nor returned.
+		{status: "refunding", known: true},
 		{status: TransactionStatus("teleported")},
 		{status: ""},
 	}
@@ -44,21 +50,26 @@ func TestTransactionStatusClassification(t *testing.T) {
 }
 
 func TestSubscriptionStatusClassification(t *testing.T) {
-	for status, known := range map[SubscriptionStatus]bool{
-		SubscriptionWaiting:   true,
-		SubscriptionOngoing:   true,
-		SubscriptionCancelled: true,
-		SubscriptionDone:      true,
-		SubscriptionError:     true,
-		"reversed":            false,
+	// Active means Oen will still charge it. An initiated or processing
+	// subscription has no completed checkout, so nothing is charged yet.
+	for _, test := range []struct {
+		status        SubscriptionStatus
+		known, active bool
+	}{
+		{"initiated", true, false},
+		{"processing", true, false},
+		{"scheduled", true, true},
+		{"ongoing", true, true},
+		{"retryScheduled", true, true},
+		{"error", true, false},
+		{"cancelled", true, false},
+		{"done", true, false},
+		{"waiting", true, true},
+		{"reversed", false, false},
 	} {
-		equal(t, known, status.Known(), string(status))
+		equal(t, test.known, test.status.Known(), string(test.status))
+		equal(t, test.active, test.status.IsActive(), string(test.status))
 	}
-	isTrue(t, SubscriptionOngoing.IsActive())
-	isTrue(t, SubscriptionWaiting.IsActive())
-	isFalse(t, SubscriptionCancelled.IsActive())
-	isFalse(t, SubscriptionDone.IsActive())
-	isFalse(t, SubscriptionError.IsActive())
 }
 
 // paymentInfo is the one field whose shape changes with the payment method,
@@ -289,4 +300,23 @@ func TestApplePayKeepsItsMethod(t *testing.T) {
 	noError(t, err)
 	equal(t, MethodApplePay, event.PaymentMethod)
 	equal(t, "", event.PaymentInfo.CardLast4)
+}
+
+// A webhook names its method in paymentMethod, and a card's paymentInfo is a
+// bare string that names none. PaymentInfo.Method must agree with
+// PaymentMethod, as it does on a transaction.
+func TestWebhookPaymentInfoMethodFollowsPaymentMethod(t *testing.T) {
+	_, client := newFake(t)
+	for _, test := range []struct {
+		fields string
+		want   PaymentMethod
+	}{
+		{`"paymentMethod":"card","paymentInfo":"4242"`, MethodCard},
+		{`"paymentMethod":"applePay","paymentInfo":{"cardNum":"4242424242424242","cardType":"Visa"}`, MethodApplePay},
+		{`"paymentInfo":{"cvsName":"7-11","code":"LLL22251222250"}`, MethodCVS},
+	} {
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,"status":"charged",` + test.fields + `}`))
+		noError(t, err)
+		equal(t, test.want, event.PaymentInfo.Method, test.fields)
+	}
 }
