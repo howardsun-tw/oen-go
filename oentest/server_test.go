@@ -180,6 +180,10 @@ func TestTransactionListIsNewestFirst(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &charged); err != nil || charged.Data.ID == "" {
 			t.Fatalf("charge %d: body=%s err=%v", i, body, err)
 		}
+		// Equal IDs would make any order look right.
+		if slices.Contains(want, charged.Data.ID) {
+			t.Fatalf("charge %d repeated the ID %q", i, charged.Data.ID)
+		}
 		want[len(want)-1-i] = charged.Data.ID
 	}
 

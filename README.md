@@ -137,7 +137,9 @@ account was just issued) carries no `success`, so `HasOutcome` is false and
 `success` alone: Oen sets it for every final status other than `failed`, so
 `ChargeSucceeded()` is also false when the status is one the SDK knows and
 does not count as paid, such as `authorized` (approved, not captured yet) or
-`cancelled`. `Amount`
+`cancelled`. A callback with no status, or with one the SDK does not know,
+still follows `success`, so check `Status.Known()` if that matters to you.
+`Amount`
 is optional on a callback — read it with `HasAmount`. A verified
 callback can still be a duplicate or arrive out of order, so before it moves
 money-related state, confirm it with `GetTransaction` or
