@@ -445,6 +445,36 @@ func TestUnknownPurposesParseWithCommonFields(t *testing.T) {
 	errIs(t, err, ErrInvalidRequest)
 }
 
+// Oen documents success as true for every final status other than failed, and
+// names charged and claimed as the paid ones. A callback whose status the SDK
+// knows and does not count as paid must not read as a payment that went
+// through, whatever its success says. Oen publishes no example for these
+// statuses, so the bodies follow the charge field table.
+func TestChargeSucceededNeedsAPaidStatusWhenItKnowsTheStatus(t *testing.T) {
+	_, client := newFake(t)
+	for _, test := range []struct {
+		status    string
+		succeeded bool
+	}{
+		{`,"status":"charged"`, true},
+		{`,"status":"claimed"`, true},
+		{`,"status":"authorized"`, false},
+		{`,"status":"cancelled"`, false},
+		{`,"status":"refunding"`, false},
+		{`,"status":"refunded"`, false},
+		// A status the SDK does not know, or none, leaves the answer to
+		// success.
+		{`,"status":"future"`, true},
+		{``, true},
+	} {
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true` + test.status + `}`))
+		noError(t, err)
+		isTrue(t, event.HasOutcome)
+		isTrue(t, event.Success)
+		equal(t, test.succeeded, event.ChargeSucceeded(), test.status)
+	}
+}
+
 // The examples below are Oen's own, from the webhook object page. Their event
 // IDs were computed with Node.js 24 from the documented formula.
 func TestChargeInProgressHasNoOutcome(t *testing.T) {

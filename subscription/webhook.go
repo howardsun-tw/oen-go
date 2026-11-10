@@ -1,9 +1,6 @@
 package subscription
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +10,7 @@ import (
 	"time"
 
 	oen "github.com/howardsun-tw/oen-go"
+	"github.com/howardsun-tw/oen-go/internal/httpx"
 )
 
 // Webhook headers Oen sends with every delivery.
@@ -140,50 +138,10 @@ func (v WebhookVerifier) VerifySignature(payload []byte, signature string) error
 	if v.Now != nil {
 		now = v.Now
 	}
-
-	var timestamp string
-	var signatures [][]byte
-	for _, part := range strings.Split(signature, ",") {
-		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			continue
-		}
-		switch key {
-		case "t":
-			if timestamp != "" {
-				return fmt.Errorf("%w: more than one timestamp", ErrInvalidSignature)
-			}
-			timestamp = value
-		case "v1":
-			decoded, err := hex.DecodeString(value)
-			if err == nil && len(decoded) == sha256.Size {
-				signatures = append(signatures, decoded)
-			}
-		}
+	if problem := httpx.CheckWebhookSignature(secret, payload, signature, now, tolerance); problem != "" {
+		return fmt.Errorf("%w: %s", ErrInvalidSignature, problem)
 	}
-	seconds, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil || timestamp == "" || timestamp[0] == '-' || timestamp[0] == '+' {
-		return fmt.Errorf("%w: missing or malformed timestamp", ErrInvalidSignature)
-	}
-	if len(signatures) == 0 {
-		return fmt.Errorf("%w: no v1 signature", ErrInvalidSignature)
-	}
-	age := now().Sub(time.Unix(seconds, 0))
-	if age > tolerance || age < -tolerance {
-		return fmt.Errorf("%w: timestamp is outside the %s tolerance", ErrInvalidSignature, tolerance)
-	}
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp))
-	mac.Write([]byte("."))
-	mac.Write(payload)
-	expected := mac.Sum(nil)
-	for _, candidate := range signatures {
-		if hmac.Equal(candidate, expected) {
-			return nil
-		}
-	}
-	return fmt.Errorf("%w: no signature matches the body", ErrInvalidSignature)
+	return nil
 }
 
 func decodeEvent(payload []byte) (*Event, error) {

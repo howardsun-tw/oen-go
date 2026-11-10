@@ -63,13 +63,5 @@ func (c *Client) Refund(ctx context.Context, req RefundRequest) (*Transaction, e
 	if err != nil {
 		return nil, err
 	}
-	resource, err := singleResource(op, resp, "transaction")
-	if err != nil {
-		return nil, err
-	}
-	transaction, err := decodeTransaction(resource, c.cfg.NaiveTimeLocation)
-	if err != nil {
-		return nil, unknownResponseOutcome(op, resp, err)
-	}
-	return &transaction, nil
+	return c.transactionFrom(op, resp)
 }

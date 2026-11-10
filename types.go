@@ -54,6 +54,18 @@ const (
 	StatusClaimed            TransactionStatus = "claimed"            // paid out to the merchant (已撥款)
 	StatusRefunded           TransactionStatus = "refunded"           // refunded (已退款)
 	StatusRefundedPostPayout TransactionStatus = "refundedPostPayout" // refunded after payout (撥款後退款)
+
+	// StatusAuthorized is a high-value payment the issuer approved and Oen
+	// has not captured yet (已授權). Oen reviews it first, so it is pending,
+	// not paid.
+	StatusAuthorized TransactionStatus = "authorized"
+	// StatusCancelled is a CVS payment code cancelled before it was paid
+	// (已取消). No money moved.
+	StatusCancelled TransactionStatus = "cancelled"
+	// StatusRefunding is a paid CVS or ATM payment whose refund is waiting
+	// for the transfer (退款中). The money is neither kept nor returned yet,
+	// so it answers false to IsPaid and to IsRefunded.
+	StatusRefunding TransactionStatus = "refunding"
 )
 
 // Known reports whether the status is one this SDK version documents. An
@@ -62,7 +74,8 @@ const (
 func (s TransactionStatus) Known() bool {
 	switch s {
 	case StatusInitiated, StatusCharging, StatusCharged, StatusFailed,
-		StatusClaimed, StatusRefunded, StatusRefundedPostPayout:
+		StatusClaimed, StatusRefunded, StatusRefundedPostPayout,
+		StatusAuthorized, StatusCancelled, StatusRefunding:
 		return true
 	default:
 		return false
@@ -71,7 +84,7 @@ func (s TransactionStatus) Known() bool {
 
 // IsPending reports a transaction that has not reached an outcome yet.
 func (s TransactionStatus) IsPending() bool {
-	return s == StatusInitiated || s == StatusCharging
+	return s == StatusInitiated || s == StatusCharging || s == StatusAuthorized
 }
 
 // IsPaid reports a transaction whose money moved and stayed.
@@ -80,7 +93,9 @@ func (s TransactionStatus) IsPaid() bool {
 }
 
 // IsFailed reports a transaction that did not take the money.
-func (s TransactionStatus) IsFailed() bool { return s == StatusFailed }
+func (s TransactionStatus) IsFailed() bool {
+	return s == StatusFailed || s == StatusCancelled
+}
 
 // IsRefunded reports a transaction that took the money and gave it back.
 func (s TransactionStatus) IsRefunded() bool {
@@ -91,26 +106,54 @@ func (s TransactionStatus) IsRefunded() bool {
 type SubscriptionStatus string
 
 const (
-	SubscriptionWaiting   SubscriptionStatus = "waiting"   // not started yet (尚未開始)
-	SubscriptionOngoing   SubscriptionStatus = "ongoing"   // in progress (進行中)
-	SubscriptionCancelled SubscriptionStatus = "cancelled" // cancelled (已取消)
-	SubscriptionDone      SubscriptionStatus = "done"      // finished (已結束)
-	SubscriptionError     SubscriptionStatus = "error"     // abnormal (異常)
+	SubscriptionInitiated      SubscriptionStatus = "initiated"      // created, checkout not completed (已建立，尚未完成結帳)
+	SubscriptionProcessing     SubscriptionStatus = "processing"     // checkout in progress, such as 3D verification (結帳中)
+	SubscriptionScheduled      SubscriptionStatus = "scheduled"      // card bound, first charge is in the future (等待首期扣款)
+	SubscriptionOngoing        SubscriptionStatus = "ongoing"        // in progress (進行中)
+	SubscriptionRetryScheduled SubscriptionStatus = "retryScheduled" // a charge failed and a retry is planned (待重扣)
+	SubscriptionError          SubscriptionStatus = "error"          // a charge failed for good; later periods are not charged (異常)
+	SubscriptionCancelled      SubscriptionStatus = "cancelled"      // cancelled, or past its end date (已取消)
+	SubscriptionDone           SubscriptionStatus = "done"           // every period charged (已結束)
+
+	// SubscriptionTrialing and SubscriptionTerminated appear only on a
+	// subscription created through Oen's Subscription API: one in its trial
+	// period (試用中), which Oen charges when the trial ends, and one that
+	// was terminated (已終止).
+	SubscriptionTrialing   SubscriptionStatus = "trialing"
+	SubscriptionTerminated SubscriptionStatus = "terminated"
+
+	// SubscriptionWaiting is "not started yet" (尚未開始) in Oen's Postman
+	// reference. The current reference lists scheduled in its place, and the
+	// testing environment answered scheduled for a subscription whose first
+	// charge was in the future (2026-11-10). It stays in case Oen still sends
+	// it.
+	SubscriptionWaiting SubscriptionStatus = "waiting"
 )
 
 // Known reports whether the status is one this SDK version documents.
 func (s SubscriptionStatus) Known() bool {
 	switch s {
-	case SubscriptionWaiting, SubscriptionOngoing, SubscriptionCancelled, SubscriptionDone, SubscriptionError:
+	case SubscriptionInitiated, SubscriptionProcessing, SubscriptionScheduled, SubscriptionOngoing,
+		SubscriptionRetryScheduled, SubscriptionError, SubscriptionCancelled, SubscriptionDone,
+		SubscriptionTrialing, SubscriptionTerminated, SubscriptionWaiting:
 		return true
 	default:
 		return false
 	}
 }
 
-// IsActive reports a subscription Oen will still charge.
+// IsActive reports a subscription Oen will still charge: one waiting for its
+// first charge or in its trial, one in progress, and one whose failed charge
+// will be retried. An initiated or processing subscription is not active,
+// because Oen charges nothing until the consumer completes checkout.
 func (s SubscriptionStatus) IsActive() bool {
-	return s == SubscriptionWaiting || s == SubscriptionOngoing
+	switch s {
+	case SubscriptionScheduled, SubscriptionOngoing, SubscriptionRetryScheduled,
+		SubscriptionTrialing, SubscriptionWaiting:
+		return true
+	default:
+		return false
+	}
 }
 
 // LineItem is one entry of Oen's productDetails. Oen requires the line items
@@ -166,7 +209,9 @@ type PaymentInfo struct {
 	Account  string
 
 	CVSName string
-	Code    string
+	// Code is the CVS payment code: code on a webhook, cvsCode on a
+	// transaction.
+	Code string
 
 	ExpiredAt *time.Time
 
@@ -490,7 +535,10 @@ type wirePaymentInfo struct {
 	Account  json.RawMessage `json:"account"`
 
 	CVSName json.RawMessage `json:"cvsName"`
+	// Oen names the CVS payment code "code" on a webhook and "cvsCode" on a
+	// transaction.
 	Code    json.RawMessage `json:"code"`
+	CVSCode json.RawMessage `json:"cvsCode"`
 
 	ExpiredAt json.RawMessage `json:"expiredAt"`
 }
@@ -528,7 +576,7 @@ func decodePaymentInfo(raw json.RawMessage, loc *time.Location) (PaymentInfo, er
 		BankName:  rawString(wire.BankName),
 		Account:   rawString(wire.Account),
 		CVSName:   rawString(wire.CVSName),
-		Code:      rawString(wire.Code),
+		Code:      firstNonEmpty(rawString(wire.Code), rawString(wire.CVSCode)),
 		ExpiredAt: expiredAt,
 	}
 	if info.Method == "" {

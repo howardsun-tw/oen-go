@@ -2,6 +2,7 @@ package oen
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
@@ -65,6 +66,10 @@ func TestGetTransactionKeepsNonCardPaymentReferences(t *testing.T) {
 
 	cvs, err := client.GetTransaction(context.Background(), "P20260928AB12CD35")
 	noError(t, err)
+	// A transaction carries the payment code as cvsCode, not as the code key
+	// a webhook uses.
+	equal(t, code, cvs.PaymentInfo.Code)
+	equal(t, "7-11", cvs.PaymentInfo.CVSName)
 	contains(t, string(cvs.RedactedPayload), `"cvsCode":"`+code+`"`)
 	contains(t, string(cvs.RedactedPayload), `"code":"`+code+`"`)
 }
@@ -301,6 +306,26 @@ func TestListTransactionsSendsItsQueryAndReadsThePageToken(t *testing.T) {
 	equal(t, "previous-token", query.Get("page"))
 }
 
+// Oen answers a lone start or end with HTTP 500 F0001, which would read as an
+// unknown outcome for a request the caller can simply correct.
+func TestListTransactionsRefusesALoneStartOrEnd(t *testing.T) {
+	server, client := newFake(t)
+	for _, test := range []struct {
+		request ListTransactionsRequest
+		field   string
+	}{
+		{ListTransactionsRequest{Start: "2026-09-01"}, "end"},
+		{ListTransactionsRequest{End: "2026-09-28"}, "start"},
+	} {
+		_, err := client.ListTransactions(context.Background(), test.request)
+		errIs(t, err, ErrInvalidInput)
+		var target *ValidationError
+		isTrue(t, errors.As(err, &target))
+		equal(t, test.field, target.Field)
+	}
+	equal(t, 0, len(server.Requests()))
+}
+
 func TestListTransactionsOmitsEmptyQueryParameters(t *testing.T) {
 	server, client := newFake(t)
 	_, err := client.ListTransactions(context.Background(), ListTransactionsRequest{})
@@ -325,6 +350,29 @@ func TestGetSubscriptionReadsTheDocumentedResource(t *testing.T) {
 	equal(t, "ORDER00001", subscription.OrderID)
 	hasTime(t, subscription.NextChargeAt)
 	equal(t, http.MethodGet, server.LastRequest("/subscriptions/{subscriptionId}").Method)
+}
+
+// The body is what Oen's testing environment answered on 2026-11-10 for a
+// subscription created through /checkout-schedule, after the consumer bound a
+// card and before its first charge. It has no nextChargeAt and no period
+// charged yet, and it must stay readable.
+func TestGetSubscriptionReadsAScheduledSubscription(t *testing.T) {
+	server, client := newFake(t)
+	server.QueueResponse("GET /subscriptions/{subscriptionId}", oentest.Response{
+		Body: []byte(`{"code":"S0000","data":{"id":"S20260928AB12CD34","status":"scheduled",` +
+			`"period":0,"numberOfPeriods":2,"paymentInterval":1,` +
+			`"startedAt":"2027-09-30T16:00:00.000Z","endedAt":"2027-10-31T16:00:00.000Z",` +
+			`"createdAt":"2026-11-10T02:08:03.314Z","amount":10,"userName":"王小明",` +
+			`"orderId":"ORDER00001","note":"probe"},"message":""}`),
+	})
+	subscription, err := client.GetSubscription(context.Background(), "S20260928AB12CD34")
+	noError(t, err)
+	equal(t, SubscriptionScheduled, subscription.Status)
+	isTrue(t, subscription.HasAmount)
+	equal(t, Amount(10), subscription.Amount)
+	equal(t, 0, subscription.Period)
+	equal(t, 2, subscription.NumberOfPeriods)
+	isTrue(t, subscription.NextChargeAt == nil)
 }
 
 func TestCancelSubscriptionSendsTheDocumentedBody(t *testing.T) {

@@ -11,8 +11,11 @@ import (
 // (查詢交易列表). Oen returns 50 rows per page and pages with a token rather
 // than an offset.
 type ListTransactionsRequest struct {
-	// Start and End bound the period. Oen documents its date fields as ISO
-	// dates in UTC+0 and does not document further constraints on this query.
+	// Start and End bound the period by Taipei-time days: Start from 00:00
+	// and End to 23:59:59. Oen accepts a date such as "2026-09-01" or a Unix
+	// millisecond timestamp, and requires both or neither: it answers a lone
+	// one with HTTP 500 F0001 ("Invalid date"), so the SDK refuses that
+	// locally. The values are otherwise sent as given.
 	Start string
 	End   string
 	// Page is the token from a previous response's NextPage.
@@ -48,15 +51,7 @@ func (c *Client) GetTransaction(ctx context.Context, transactionID string) (*Tra
 	if err != nil {
 		return nil, err
 	}
-	resource, err := singleResource(op, resp, "transaction")
-	if err != nil {
-		return nil, err
-	}
-	transaction, err := decodeTransaction(resource, c.cfg.NaiveTimeLocation)
-	if err != nil {
-		return nil, unknownResponseOutcome(op, resp, err)
-	}
-	return &transaction, nil
+	return c.transactionFrom(op, resp)
 }
 
 // ListOrderTransactions returns every transaction Oen holds for one merchant
@@ -86,6 +81,12 @@ func (c *Client) ListOrderTransactions(ctx context.Context, orderID string) ([]T
 // (查詢交易列表).
 func (c *Client) ListTransactions(ctx context.Context, req ListTransactionsRequest) (*TransactionPage, error) {
 	const op = "ListTransactions"
+	switch {
+	case req.Start != "" && req.End == "":
+		return nil, newValidationError(op, "end", "end is required when start is set")
+	case req.Start == "" && req.End != "":
+		return nil, newValidationError(op, "start", "start is required when end is set")
+	}
 	query := url.Values{}
 	for key, value := range map[string]string{"page": req.Page, "start": req.Start, "end": req.End} {
 		if value != "" {
@@ -134,6 +135,18 @@ func (c *Client) CancelSubscription(ctx context.Context, req CancelSubscriptionR
 		return nil, err
 	}
 	return c.subscriptionFrom(op, resp, false)
+}
+
+func (c *Client) transactionFrom(op string, resp response) (*Transaction, error) {
+	resource, err := singleResource(op, resp, "transaction")
+	if err != nil {
+		return nil, err
+	}
+	transaction, err := decodeTransaction(resource, c.cfg.NaiveTimeLocation)
+	if err != nil {
+		return nil, unknownResponseOutcome(op, resp, err)
+	}
+	return &transaction, nil
 }
 
 func (c *Client) subscriptionFrom(op string, resp response, requireAmount bool) (*Subscription, error) {
