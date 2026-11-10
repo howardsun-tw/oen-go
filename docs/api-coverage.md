@@ -31,13 +31,15 @@ retrieved 2026-11-10.
 - `TransactionStatus` gains `authorized`, `cancelled` and `refunding`, from
   the current reference alone; none was observed.
   - `authorized` (approved, not captured, under Oen's review) is pending.
-    `ChargeSucceeded()` is false for it: Oen documents `success` as true for
-    every final status other than `failed`, so the flag alone would report an
-    uncaptured payment as paid. Oen publishes no `authorized` callback
-    example.
   - `cancelled` (an unpaid CVS code that was cancelled) is failed.
   - `refunding` (a refund waiting for its transfer) is known and answers false
     to `IsPaid` and `IsRefunded`.
+- `ChargeSucceeded()` is false when the callback's status is one the SDK
+  knows and does not count as paid. Oen documents `success` as true for every
+  final status other than `failed` and names `charged` and `claimed` as the
+  paid ones, so the flag alone would report an `authorized` or `cancelled`
+  payment as paid. A callback with no status, or an unknown one, still follows
+  `success`. Oen publishes no callback example for these statuses.
 
 Observed on the testing environment on 2026-11-10, with one subscription
 created through `POST /checkout-schedule` and a first charge in the future:

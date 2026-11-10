@@ -178,9 +178,11 @@ func (s *Server) ChargeThenFail(endpoint string, status int) {
 // without writing a response, so a client waiting past its timeout sees a
 // transport failure rather than an empty HTTP 200.
 //
-// The request is recorded, but nothing is charged, refunded or cancelled.
-// Queue Response{RecordCharge: true, Block: true} for a request that applied
-// and then hung.
+// The request is recorded, and the endpoint's default handler does not run, so
+// nothing is charged, refunded or cancelled. A queued response is still taken
+// first: one with RecordCharge applies the request before the hang. Queue
+// Response{RecordCharge: true, Block: true} for a request that applied and
+// then hung.
 func (s *Server) Hang(endpoint string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -657,10 +659,11 @@ func normalizeKey(endpoint string) string {
 }
 
 // splitEndpoint separates the optional method of "PUT /subscriptions/{id}"
-// from its path. A path that itself contains a space has no method.
+// from its path. A method has no slash, so a path that itself contains a
+// space, with or without a leading slash, has no method.
 func splitEndpoint(endpoint string) (method, path string) {
 	before, after, found := strings.Cut(endpoint, " ")
-	if !found || strings.HasPrefix(before, "/") {
+	if !found || strings.Contains(before, "/") {
 		return "", endpoint
 	}
 	return strings.ToUpper(before), after

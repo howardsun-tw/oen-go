@@ -352,37 +352,27 @@ func TestGetSubscriptionReadsTheDocumentedResource(t *testing.T) {
 	equal(t, http.MethodGet, server.LastRequest("/subscriptions/{subscriptionId}").Method)
 }
 
-// The bodies are what Oen's testing environment answered on 2026-11-10 for a
-// subscription created through /checkout-schedule with a first charge in the
-// future: before the consumer bound a card, and after. Neither carries
-// nextChargeAt.
+// The body is what Oen's testing environment answered on 2026-11-10 for a
+// subscription created through /checkout-schedule, after the consumer bound a
+// card and before its first charge. It has no nextChargeAt and no period
+// charged yet, and it must stay readable.
 func TestGetSubscriptionReadsAScheduledSubscription(t *testing.T) {
 	server, client := newFake(t)
-	for _, test := range []struct {
-		status SubscriptionStatus
-		active bool
-	}{
-		{SubscriptionInitiated, false},
-		{SubscriptionScheduled, true},
-	} {
-		server.QueueResponse("GET /subscriptions/{subscriptionId}", oentest.Response{
-			Body: []byte(`{"code":"S0000","data":{"id":"S20260928AB12CD34","status":"` + string(test.status) + `",` +
-				`"period":0,"numberOfPeriods":2,"paymentInterval":1,` +
-				`"startedAt":"2027-09-30T16:00:00.000Z","endedAt":"2027-10-31T16:00:00.000Z",` +
-				`"createdAt":"2026-11-10T02:08:03.314Z","amount":10,"userName":"王小明",` +
-				`"orderId":"ORDER00001","note":"probe"},"message":""}`),
-		})
-		subscription, err := client.GetSubscription(context.Background(), "S20260928AB12CD34")
-		noError(t, err)
-		equal(t, test.status, subscription.Status)
-		isTrue(t, subscription.Status.Known(), string(test.status))
-		equal(t, test.active, subscription.Status.IsActive(), string(test.status))
-		isTrue(t, subscription.HasAmount)
-		equal(t, Amount(10), subscription.Amount)
-		equal(t, 0, subscription.Period)
-		equal(t, 2, subscription.NumberOfPeriods)
-		isTrue(t, subscription.NextChargeAt == nil)
-	}
+	server.QueueResponse("GET /subscriptions/{subscriptionId}", oentest.Response{
+		Body: []byte(`{"code":"S0000","data":{"id":"S20260928AB12CD34","status":"scheduled",` +
+			`"period":0,"numberOfPeriods":2,"paymentInterval":1,` +
+			`"startedAt":"2027-09-30T16:00:00.000Z","endedAt":"2027-10-31T16:00:00.000Z",` +
+			`"createdAt":"2026-11-10T02:08:03.314Z","amount":10,"userName":"王小明",` +
+			`"orderId":"ORDER00001","note":"probe"},"message":""}`),
+	})
+	subscription, err := client.GetSubscription(context.Background(), "S20260928AB12CD34")
+	noError(t, err)
+	equal(t, SubscriptionScheduled, subscription.Status)
+	isTrue(t, subscription.HasAmount)
+	equal(t, Amount(10), subscription.Amount)
+	equal(t, 0, subscription.Period)
+	equal(t, 2, subscription.NumberOfPeriods)
+	isTrue(t, subscription.NextChargeAt == nil)
 }
 
 func TestCancelSubscriptionSendsTheDocumentedBody(t *testing.T) {

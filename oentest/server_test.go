@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +108,9 @@ func TestHangAppliesNothing(t *testing.T) {
 	if !strings.Contains(body, `"transactions":[]`) {
 		t.Fatalf("body=%s; a hung charge must leave no transaction", body)
 	}
+	if got := server.Count("/token/transactions"); got != 1 {
+		t.Fatalf("recorded requests=%d; a hung request is still recorded", got)
+	}
 }
 
 // S0000 is the default only for a 2xx status. On a failure status it would
@@ -127,9 +129,10 @@ func TestFailureStatusWithoutCodeCarriesNoSuccessCode(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, `"code":"S0000"`) {
 		t.Fatalf("status=%d body=%s; a 2xx without a code is still S0000", status, body)
 	}
+	// Oen answers an unknown path in plain text, not with an envelope.
 	status, body = send(t, http.DefaultClient, server, http.MethodGet, "/no-such-endpoint", "")
-	if status != http.StatusNotFound || strings.Contains(body, successCode) {
-		t.Fatalf("status=%d body=%s; want 404 without %s", status, body, successCode)
+	if status != http.StatusNotFound || body != "Not Found" {
+		t.Fatalf("status=%d body=%q; want 404 with the plain-text body Not Found", status, body)
 	}
 }
 
@@ -152,19 +155,32 @@ func TestCountAndLastRequestAcceptAMethod(t *testing.T) {
 	if got := server.LastRequest("/subscriptions/S1").Method; got != http.MethodGet {
 		t.Fatalf("last method=%q want GET", got)
 	}
+	// A path with a space in it is a path, with or without its leading slash.
+	send(t, http.DefaultClient, server, http.MethodGet, "/order/A%20B/transactions", "")
+	for _, endpoint := range []string{"/order/A B/transactions", "order/A B/transactions"} {
+		if got := server.Count(endpoint); got != 1 {
+			t.Fatalf("Count(%q)=%d want 1", endpoint, got)
+		}
+	}
 }
 
 // Oen lists transactions newest first; map order would make that random.
 func TestTransactionListIsNewestFirst(t *testing.T) {
 	server := New()
 	t.Cleanup(server.Close)
+	// The expected order is the reverse of the IDs the charges returned.
 	want := make([]string, 6)
 	for i := range want {
-		send(t, http.DefaultClient, server, http.MethodPost, "/token/transactions", `{"orderId":"O1","amount":1000}`)
-		want[len(want)-1-i] = DefaultTransactionHID
-		if i > 0 {
-			want[len(want)-1-i] += "-" + strconv.Itoa(i+1)
+		_, body := send(t, http.DefaultClient, server, http.MethodPost, "/token/transactions", `{"orderId":"O1","amount":1000}`)
+		var charged struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
 		}
+		if err := json.Unmarshal([]byte(body), &charged); err != nil || charged.Data.ID == "" {
+			t.Fatalf("charge %d: body=%s err=%v", i, body, err)
+		}
+		want[len(want)-1-i] = charged.Data.ID
 	}
 
 	_, body := send(t, http.DefaultClient, server, http.MethodGet, "/transactions", "")

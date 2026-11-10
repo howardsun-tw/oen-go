@@ -446,25 +446,32 @@ func TestUnknownPurposesParseWithCommonFields(t *testing.T) {
 }
 
 // Oen documents success as true for every final status other than failed, and
-// authorized as approved but not captured. Such a callback must not read as a
-// payment that went through. Oen publishes no authorized example, so the body
-// follows the charge field table.
-func TestAuthorizedChargeIsNotASucceededCharge(t *testing.T) {
+// names charged and claimed as the paid ones. A callback whose status the SDK
+// knows and does not count as paid must not read as a payment that went
+// through, whatever its success says. Oen publishes no example for these
+// statuses, so the bodies follow the charge field table.
+func TestChargeSucceededNeedsAPaidStatusWhenItKnowsTheStatus(t *testing.T) {
 	_, client := newFake(t)
 	for _, test := range []struct {
-		status    TransactionStatus
+		status    string
 		succeeded bool
 	}{
-		{StatusAuthorized, false},
-		{StatusCharged, true},
-		{StatusClaimed, true},
+		{`,"status":"charged"`, true},
+		{`,"status":"claimed"`, true},
+		{`,"status":"authorized"`, false},
+		{`,"status":"cancelled"`, false},
+		{`,"status":"refunding"`, false},
+		{`,"status":"refunded"`, false},
+		// A status the SDK does not know, or none, leaves the answer to
+		// success.
+		{`,"status":"future"`, true},
+		{``, true},
 	} {
-		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true,"status":"` + string(test.status) + `"}`))
+		event, err := client.ParseWebhook([]byte(`{"merchantId":"oentech","id":"P1","purpose":"charge","success":true` + test.status + `}`))
 		noError(t, err)
-		equal(t, test.status, event.Status)
 		isTrue(t, event.HasOutcome)
 		isTrue(t, event.Success)
-		equal(t, test.succeeded, event.ChargeSucceeded(), string(test.status))
+		equal(t, test.succeeded, event.ChargeSucceeded(), test.status)
 	}
 }
 

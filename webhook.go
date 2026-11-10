@@ -281,10 +281,17 @@ func (e *WebhookEvent) TokenBound() bool {
 // ChargeSucceeded reports a payment Oen says went through. It is still the
 // provider's claim, not a verified fact; see [WebhookEvent.Verified].
 //
-// An authorized charge is not one: Oen documents success as true for every
-// final status other than failed, and authorized as approved but not captured.
+// success alone does not say so. Oen documents it as true for every final
+// status other than failed, and names charged and claimed as the paid ones. A
+// status this SDK knows and does not count as paid, such as authorized
+// (approved, not captured) or cancelled, is therefore not a succeeded charge.
+// A callback with no status, or with one this SDK does not know, leaves the
+// answer to success.
 func (e *WebhookEvent) ChargeSucceeded() bool {
-	return e.Purpose == PurposeCharge && e.HasOutcome && e.Success && e.Status != StatusAuthorized
+	if e.Purpose != PurposeCharge || !e.HasOutcome || !e.Success {
+		return false
+	}
+	return e.Status.IsPaid() || !e.Status.Known()
 }
 
 type wireWebhook struct {
@@ -386,7 +393,7 @@ func (c *Client) VerifyWebhookSignature(raw []byte, signature string) error {
 	if c.cfg.WebhookSecret == "" {
 		return newValidationError(op, "webhookSecret", "webhook secret is not configured")
 	}
-	if problem := httpx.CheckWebhookSignature(c.cfg.WebhookSecret, raw, signature, c.cfg.Now(), c.cfg.WebhookTolerance); problem != "" {
+	if problem := httpx.CheckWebhookSignature(c.cfg.WebhookSecret, raw, signature, c.cfg.Now, c.cfg.WebhookTolerance); problem != "" {
 		return &Error{Op: op, Kind: KindInvalidSignature, Err: errors.New(problem)}
 	}
 	return nil

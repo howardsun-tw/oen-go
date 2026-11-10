@@ -119,8 +119,9 @@ func PrintableASCII(value string) bool {
 // "<t>.<body>" with HMAC-SHA256 under the signing secret; t must be within
 // tolerance of now in either direction, and any matching v1 passes. It returns
 // a problem description, or "" when the signature is valid. The caller must
-// refuse an empty secret first: anyone can compute a signature under it.
-func CheckWebhookSignature(secret string, payload []byte, signature string, now time.Time, tolerance time.Duration) string {
+// refuse an empty secret first: anyone can compute a signature under it. now
+// is read only once the header has a timestamp and a v1 to check.
+func CheckWebhookSignature(secret string, payload []byte, signature string, now func() time.Time, tolerance time.Duration) string {
 	var timestamp string
 	var signatures [][]byte
 	for _, part := range strings.Split(signature, ",") {
@@ -148,7 +149,7 @@ func CheckWebhookSignature(secret string, payload []byte, signature string, now 
 	if len(signatures) == 0 {
 		return "no v1 signature"
 	}
-	age := now.Sub(time.Unix(seconds, 0))
+	age := now().Sub(time.Unix(seconds, 0))
 	if age > tolerance || age < -tolerance {
 		return fmt.Sprintf("timestamp is outside the %s tolerance", tolerance)
 	}

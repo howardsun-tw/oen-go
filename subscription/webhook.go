@@ -138,7 +138,7 @@ func (v WebhookVerifier) VerifySignature(payload []byte, signature string) error
 	if v.Now != nil {
 		now = v.Now
 	}
-	if problem := httpx.CheckWebhookSignature(secret, payload, signature, now(), tolerance); problem != "" {
+	if problem := httpx.CheckWebhookSignature(secret, payload, signature, now, tolerance); problem != "" {
 		return fmt.Errorf("%w: %s", ErrInvalidSignature, problem)
 	}
 	return nil

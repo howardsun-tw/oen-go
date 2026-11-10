@@ -133,9 +133,11 @@ the purpose, such as `merchantId` and `id` on a charge and a boolean
 nonempty string `token`. Missing or malformed fields return
 `ErrInvalidRequest`. A `charge` that is still `charging` (a CVS code or ATM
 account was just issued) carries no `success`, so `HasOutcome` is false and
-`ChargeSucceeded()` is false; status alone is not an outcome flag. A charge
-that is `authorized` (approved, not captured yet) is not a succeeded charge
-either, whatever its `success` says. `Amount`
+`ChargeSucceeded()` is false; status alone is not an outcome flag. Neither is
+`success` alone: Oen sets it for every final status other than `failed`, so
+`ChargeSucceeded()` is also false when the status is one the SDK knows and
+does not count as paid, such as `authorized` (approved, not captured yet) or
+`cancelled`. `Amount`
 is optional on a callback — read it with `HasAmount`. A verified
 callback can still be a duplicate or arrive out of order, so before it moves
 money-related state, confirm it with `GetTransaction` or
