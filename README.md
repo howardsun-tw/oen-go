@@ -346,8 +346,8 @@ is the other one. `TransactionStatus` answers `IsPending`, `IsPaid`,
 `IsFailed` and `IsRefunded`; a status this SDK version does not know answers
 false to all of them and `Known()` reports false, so a new provider state can
 never be read as a settled outcome. `SubscriptionStatus.IsActive` is true while
-Oen will still charge the subscription: `scheduled`, `ongoing` and
-`retryScheduled`, plus `waiting` from Oen's older reference.
+Oen will still charge the subscription: `scheduled`, `ongoing`,
+`retryScheduled` and `trialing`, plus `waiting` from Oen's older reference.
 
 ## Subscription API
 

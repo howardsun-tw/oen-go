@@ -100,6 +100,14 @@ func TestWebhookSignatureFailures(t *testing.T) {
 }
 
 func TestWebhookToleranceIsConfigurable(t *testing.T) {
+	// The default accepts exactly 5 minutes either way; 301 seconds is
+	// rejected in TestWebhookSignatureFailures.
+	for _, edge := range []int64{webhookNow.Unix() - 300, webhookNow.Unix() + 300} {
+		header := headerFor("t=" + strconv.FormatInt(edge, 10) + ",v1=" + sign(testSecret, edge, renewedEvent))
+		_, err := verifier().Verify([]byte(renewedEvent), header)
+		noError(t, err)
+	}
+
 	ts := webhookNow.Unix() - 600
 	signature := "t=" + strconv.FormatInt(ts, 10) + ",v1=" + sign(testSecret, ts, renewedEvent)
 	_, err := verifier().Verify([]byte(renewedEvent), headerFor(signature))

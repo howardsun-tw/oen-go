@@ -27,7 +27,9 @@ retrieved 2026-11-10.
   `retryScheduled`, which the current reference lists and the Postman
   collection does not. `IsActive()` is now true for `scheduled` and
   `retryScheduled` as well: Oen still charges both. `waiting`, which only the
-  Postman collection lists, stays known and active.
+  Postman collection lists, stays known and active. `trialing` (active) and
+  `terminated` are known too: the reference says they appear only on a
+  subscription created through the Subscription API. Neither was observed.
 - `TransactionStatus` gains `authorized`, `cancelled` and `refunding`, from
   the current reference alone; none was observed.
   - `authorized` (approved, not captured, under Oen's review) is pending.

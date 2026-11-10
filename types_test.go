@@ -64,6 +64,10 @@ func TestSubscriptionStatusClassification(t *testing.T) {
 		{"error", true, false},
 		{"cancelled", true, false},
 		{"done", true, false},
+		// Only on a subscription created through the Subscription API. A
+		// trial is charged when it ends.
+		{"trialing", true, true},
+		{"terminated", true, false},
 		{"waiting", true, true},
 		{"reversed", false, false},
 	} {

@@ -115,6 +115,13 @@ const (
 	SubscriptionCancelled      SubscriptionStatus = "cancelled"      // cancelled, or past its end date (已取消)
 	SubscriptionDone           SubscriptionStatus = "done"           // every period charged (已結束)
 
+	// SubscriptionTrialing and SubscriptionTerminated appear only on a
+	// subscription created through Oen's Subscription API: one in its trial
+	// period (試用中), which Oen charges when the trial ends, and one that
+	// was terminated (已終止).
+	SubscriptionTrialing   SubscriptionStatus = "trialing"
+	SubscriptionTerminated SubscriptionStatus = "terminated"
+
 	// SubscriptionWaiting is "not started yet" (尚未開始) in Oen's Postman
 	// reference. The current reference lists scheduled in its place, and the
 	// testing environment answered scheduled for a subscription whose first
@@ -128,7 +135,7 @@ func (s SubscriptionStatus) Known() bool {
 	switch s {
 	case SubscriptionInitiated, SubscriptionProcessing, SubscriptionScheduled, SubscriptionOngoing,
 		SubscriptionRetryScheduled, SubscriptionError, SubscriptionCancelled, SubscriptionDone,
-		SubscriptionWaiting:
+		SubscriptionTrialing, SubscriptionTerminated, SubscriptionWaiting:
 		return true
 	default:
 		return false
@@ -136,12 +143,13 @@ func (s SubscriptionStatus) Known() bool {
 }
 
 // IsActive reports a subscription Oen will still charge: one waiting for its
-// first charge, one in progress, and one whose failed charge will be retried.
-// An initiated or processing subscription is not active, because Oen charges
-// nothing until the consumer completes checkout.
+// first charge or in its trial, one in progress, and one whose failed charge
+// will be retried. An initiated or processing subscription is not active,
+// because Oen charges nothing until the consumer completes checkout.
 func (s SubscriptionStatus) IsActive() bool {
 	switch s {
-	case SubscriptionScheduled, SubscriptionOngoing, SubscriptionRetryScheduled, SubscriptionWaiting:
+	case SubscriptionScheduled, SubscriptionOngoing, SubscriptionRetryScheduled,
+		SubscriptionTrialing, SubscriptionWaiting:
 		return true
 	default:
 		return false
